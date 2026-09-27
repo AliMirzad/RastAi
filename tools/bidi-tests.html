@@ -437,6 +437,20 @@
       t.assert("Persian-only sentence unchanged",
         !/<bdi/.test(pure),
         "wrapped: " + pure);
+
+      // Colon after Latin word — same class of bug as trailing period.
+      // Must stay OUTSIDE any bdi so BiDi puts it at the paragraph's
+      // visual left edge (semantic end of the RTL line).
+      const colon = wrapWith("در Runtime:", NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      t.assert("'در Runtime:' — no bdi, colon stays bare",
+        !/<bdi/.test(colon),
+        "wrapped: " + colon);
+      const colonMid = wrapWith("پس در Runtime: هیچ اطلاعاتی نمانده.",
+        NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      t.assert("mid-sentence colon not stuck to Runtime bdi",
+        !/Runtime:<\/bdi>/.test(colonMid) &&
+        !/<bdi[^>]*>Runtime:/.test(colonMid),
+        "wrapped: " + colonMid);
     });
 
     // ------- finish ---------------------------------------------------

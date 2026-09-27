@@ -445,7 +445,13 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
       S.send({ type: "rastai-toggle", mode: "always" });
       await S.wait(80);
       S.send({ type: "rastai-toggle", mode: "smart" });
-      await S.wait(160);
+      // Re-marking is deliberately scheduled in small idle batches.
+      // Poll instead of assuming a fast workstation-sized timeout so
+      // this invariant remains stable on shared CI runners.
+      for (let i = 0; i < 20; i++) {
+        if ($("p1").getAttribute("data-rastai-rtl") === "rtl") break;
+        await S.wait(50);
+      }
       // p1 (pure Persian) must still be marked rtl — proving getOverride
       // returned null cleanly on the empty-map path.
       S.assert($("p1").getAttribute("data-rastai-rtl") === "rtl",

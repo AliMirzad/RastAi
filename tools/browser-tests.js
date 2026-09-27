@@ -11,6 +11,8 @@ const path = require("path");
 
 const CANDIDATES = [
   process.env.CHROME,
+  process.env.CHROME_PATH,
+  process.env.CHROME_BIN,
   "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
   "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -45,10 +47,16 @@ const suites = [
 let anyFail = false;
 for (const s of suites) {
   const url = "file://" + path.resolve(__dirname, s.file).replace(/\\/g, "/");
-  const args = ["--headless=new", "--disable-gpu"].concat(s.flags || []).concat(["--dump-dom", url]);
+  const ciFlags = process.env.CI ? ["--no-sandbox", "--disable-dev-shm-usage"] : [];
+  const args = ["--headless=new", "--disable-gpu"].concat(ciFlags, s.flags || []).concat(["--dump-dom", url]);
   let out;
-  try { out = execFileSync(chrome, args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }); }
-  catch (e) { console.error(s.name + " chrome failed:", e.message); anyFail = true; continue; }
+  try { out = execFileSync(chrome, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }); }
+  catch (e) {
+    console.error(s.name + " chrome failed:", e.message);
+    if (e.stderr) console.error(String(e.stderr).trim());
+    anyFail = true;
+    continue;
+  }
   const summary = /<div id="summary"[^>]*>([^<]+)<\/div>/.exec(out);
   const title = /<title>([^<]+)<\/title>/.exec(out);
   console.log(s.name.padEnd(24) + " " + (title ? title[1] : "?") +

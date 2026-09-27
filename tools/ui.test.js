@@ -14,6 +14,8 @@ const { pathToFileURL } = require("url");
 function findChrome() {
   const c = [
     process.env.CHROME_PATH,
+    process.env.CHROME,
+    process.env.CHROME_BIN,
     "C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe",
     "C:\\Program Files\\Microsoft\\Edge\\Application\\msedge.exe",
@@ -39,13 +41,17 @@ for (const page of pages) {
   const url = pathToFileURL(path.join(dir, file)).href + (query ? "?" + query : "");
   let dom = "";
   try {
+    const ciFlags = process.env.CI ? ["--no-sandbox", "--disable-dev-shm-usage"] : [];
     dom = execFileSync(chrome, [
       "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
       "--allow-file-access-from-files", "--virtual-time-budget=20000",
       "--user-data-dir=" + path.join(require("os").tmpdir(), "rastai-rtl-ui-test"),
-      "--dump-dom", url
-    ], { encoding: "utf8", timeout: 60000, stdio: ["ignore", "pipe", "ignore"] });
-  } catch (e) { dom = String((e && e.stdout) || ""); }
+      ...ciFlags, "--dump-dom", url
+    ], { encoding: "utf8", timeout: 60000, stdio: ["ignore", "pipe", "pipe"] });
+  } catch (e) {
+    dom = String((e && e.stdout) || "");
+    if (e && e.stderr) console.error(String(e.stderr).trim());
+  }
 
   const m = dom.match(/<pre id="out">([\s\S]*?)<\/pre>/);
   console.log(page);
