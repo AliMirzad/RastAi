@@ -1,0 +1,34 @@
+# Operating system files
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Editors and IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Dependencies and caches
+node_modules/
+.cache/
+.tmp/
+tmp/
+
+# Build and test output
+dist/
+coverage/
+test-results/
+playwright-report/
+artifacts/
+screenshots/
+*.log
+*.zip
+*.crx
+
+# Local secrets and signing keys
+.env
+.env.*
+!.env.example
+*.pem

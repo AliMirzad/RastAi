@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <title>RastAI — browser runtime benchmark</title>
+  <style>
+    body { font: 13px/1.5 -apple-system, Segoe UI, Roboto, sans-serif;
+      margin: 16px; max-width: 900px; }
+    h1 { font-size: 16px; }
+    pre { background: #f4f5f7; padding: 10px 14px; border-radius: 6px;
+      font: 11px/1.4 ui-monospace, Menlo, Consolas, monospace;
+      white-space: pre; overflow-x: auto; }
+    /* Stage is off-screen so the extension's DOM writes don't affect
+       our own layout measurements. */
+    .stage { position: absolute; left: -9999px; top: 0; width: 800px;
+      font: 16px/1.5 Tahoma, sans-serif; }
+    .stage p { margin: 0 0 6px; }
+    .stage code { font: 13px ui-monospace, Menlo, Consolas, monospace; }
+    .stage table { border-collapse: collapse; width: 100%; margin: 4px 0; }
+    .stage th, .stage td { border-bottom: 1px solid #ddd; padding: 4px 8px;
+      text-align: start; }
+    .stage ul, .stage ol { margin: 0 0 6px; padding-right: 1.75em; }
+  </style>
+</head>
+<body>
+<h1>RastAI — browser runtime benchmark</h1>
+<pre id="out">running…</pre>
+<div id="stage" class="stage"></div>
+
+<script>
+/*
+ * A reliable Chrome-extension runtime bench.
+ *
+ * The prior attempt polled requestAnimationFrame under
+ * --virtual-time-budget and never completed. This version:
+ *   - Uses performance.now() only (a wall clock).
+ *   - Polls setTimeout(0) until a stability condition holds — no
+ *     dependence on rAF's virtual-time behavior.
+ *   - Signals completion via window.__perfComplete + writes JSON to
+ *     the #out element so a Node runner can read it from --dump-dom.
+ *
+ * Metrics collected (light-weight, no production instrumentation):
+ *   - total ms from stage-populate to queue stable
+ *   - MutationObserver callback count (via a shadow observer we own)
+ *   - mutation records seen
+ *   - marked-paragraph count after stability
+ *
+ * The extension's content.js is loaded once; per-scenario we clear
+ * and repopulate the stage, count our shadow observer's callbacks
+ * before and after, and wait for the marked-element count to stop
+ * growing.
+ */
+
+// content.js schedules a 500ms setInterval as a route-change safety net.
+// Under headless + virtual-time-budget every 500ms tick consumes budget
+// forever. For the bench we replace setInterval with a version that
+// does nothing so virtual time can advance to actual work. We also
+// force requestIdleCallback to a plain setTimeout so its polyfill/fallback
+// under headless doesn't stall forever.
+(function () {
+  const orig = window.setInterval;
+  window.setInterval = function (fn, ms) {
+    if (typeof ms === "number" && ms >= 400 && ms <= 900) return -1;
+    return orig.apply(window, arguments);
+  };
+  // Force rIC → setTimeout path so it fires under virtual-time-budget.
+  delete window.requestIdleCallback;
+  Object.defineProperty(window, "requestIdleCallback", {
+    value: undefined, configurable: true, writable: true
+  });
+})();
+
+// -------- extension-env stub --------
+(function () {
+  const store = { sync: {}, local: {}, listeners: [] };
+  const clone = (v) => (v === undefined ? v : JSON.parse(JSON.stringify(v)));
+  function area(name) {
+    return {
+      get(def, cb) {
+        const s = store[name]; let out = {};
+        if (def && typeof def === "object") {
+          for (const k of Object.keys(def)) out[k] = (k in s) ? clone(s[k]) : def[k];
+        }
+        setTimeout(() => cb(out), 0);
+      },
+      set(o, cb) {
+        for (const k of Object.keys(o)) store[name][k] = clone(o[k]);
+        setTimeout(() => cb && cb(), 0);
+      },
+      remove(k, cb) { delete store[name][k]; setTimeout(() => cb && cb(), 0); }
+    };
+  }
+  window.__store = store;
+  window.chrome = {
+    runtime: {
+      getManifest: () => ({
+        content_scripts: [{ matches: ["file://*/*", "https://*/*", "http://*/*"] }]
+      }),
+      onMessage: { addListener: (f) => store.listeners.push(f) },
+      getURL: (p) => p
+    },
+    storage: {
+      sync: area("sync"),
+      local: area("local"),
+      onChanged: { addListener: () => {} }
+    }
+  };
+})();
+
+// -------- fixtures --------
+const PERSIAN_1 = "این یک پاراگراف فارسی است که در آن هیچ کلمه‌ی انگلیسی وجود ندارد.";
+const PERSIAN_2 = "برای بررسی عملکرد راست‌چین‌ساز چند پاراگراف نیاز داریم.";
+const MIXED = "این متن درباره‌ی List<String>, Map<String, Integer> و روش کار آن‌هاست.";
+const CODE_LINE = "کلاس <code>Box&lt;String&gt;</code> برای کپسول‌کردن استفاده می‌شود.";
+const ENGLISH = "This paragraph contains no Persian, so the engine should leave it.";
+const URL_LINE = "آدرس سرور 127.0.0.1:8080 است و پورت 443 هم باز است.";
+const HEAD_LINE = "عنوان بخش فارسی درباره‌ی Java";
+
+const SRC = [PERSIAN_1, PERSIAN_2, MIXED, CODE_LINE, ENGLISH, URL_LINE];
+
+function stageEl() { return document.getElementById("stage"); }
+
+function buildParagraphs(n) {
+  const stage = stageEl();
+  stage.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < n; i++) {
+    const p = document.createElement("p");
+    p.innerHTML = SRC[i % SRC.length];
+    frag.appendChild(p);
+  }
+  stage.appendChild(frag);
+}
+
+function buildConversation(elements) {
+  // Mix of headings, paragraphs, lists, tables, code — the shape of
+  // a long ChatGPT conversation.
+  const stage = stageEl();
+  stage.innerHTML = "";
+  const frag = document.createDocumentFragment();
+  let placed = 0;
+  while (placed < elements) {
+    const kind = placed % 7;
+    if (kind === 0) {
+      const h = document.createElement("h2");
+      h.textContent = HEAD_LINE;
+      frag.appendChild(h);
+      placed++;
+    } else if (kind === 6) {
+      const ul = document.createElement("ul");
+      for (let i = 0; i < 3 && placed < elements; i++, placed++) {
+        const li = document.createElement("li");
+        li.innerHTML = SRC[i % SRC.length];
+        ul.appendChild(li);
+      }
+      frag.appendChild(ul);
+    } else if (kind === 4) {
+      // Small table
+      const t = document.createElement("table");
+      t.innerHTML =
+        "<thead><tr><th>مرحله</th><th>اتفاق</th></tr></thead>" +
+        "<tbody>" +
+        "<tr><td>Compile Time</td><td>کامپایلر آرگومان‌های نوع را بررسی می‌کند</td></tr>" +
+        "<tr><td>Runtime</td><td>JVM چیزی را فقط به‌عنوان کلاس خام Box می‌بیند</td></tr>" +
+        "</tbody>";
+      frag.appendChild(t);
+      placed += 5;
+    } else {
+      const p = document.createElement("p");
+      p.innerHTML = SRC[kind % SRC.length];
+      frag.appendChild(p);
+      placed++;
+    }
+  }
+  stage.appendChild(frag);
+}
+
+function buildTable(rows) {
+  const stage = stageEl();
+  stage.innerHTML = "";
+  const t = document.createElement("table");
+  const thead = document.createElement("thead");
+  thead.innerHTML = "<tr><th>مرحله</th><th>اتفاق</th></tr>";
+  t.appendChild(thead);
+  const tb = document.createElement("tbody");
+  for (let i = 0; i < rows; i++) {
+    const tr = document.createElement("tr");
+    tr.innerHTML =
+      (i % 2 ? "<td>Compile Time</td><td>کامپایلر آرگومان‌های نوع را بررسی می‌کند</td>"
+             : "<td>Runtime</td><td>JVM چیزی را فقط به‌عنوان کلاس خام Box می‌بیند</td>");
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  stage.appendChild(t);
+}
+
+// A shadow observer that lets us count mutation records the extension
+// (and we) generate on the stage subtree. This is not the extension's
+// observer — we run it in parallel so counts are honest.
+let shadowObserver = null;
+let shadowRecords = 0;
+let shadowCallbacks = 0;
+function startShadowObserver() {
+  if (shadowObserver) return;
+  shadowObserver = new MutationObserver((records) => {
+    shadowCallbacks++;
+    shadowRecords += records.length;
+  });
+  shadowObserver.observe(stageEl(), { childList: true, subtree: true, characterData: true, attributes: true });
+}
+function resetShadowCounts() { shadowRecords = 0; shadowCallbacks = 0; }
+
+// Wait until the extension has stopped marking new elements. Poll every
+// 5ms, up to a hard 3000ms cap. Fine-grained polling keeps the timing
+// measurement from being dominated by the poll interval.
+function waitStable(markSelector, minTicks, expectFirst) {
+  minTicks = minTicks || 3;
+  return new Promise((resolve) => {
+    const deadline = performance.now() + 3000;
+    let prev = -1, same = 0;
+    (function tick() {
+      const count = document.querySelectorAll(markSelector).length;
+      if (count === prev) same++; else { same = 0; prev = count; }
+      // "Stable" means: N ticks in a row with same count, AND at least
+      // one mark exists (so we don't stop at count=0 before the
+      // extension has caught up). expectFirst=false skips the count>0
+      // gate for the initial clear-stage wait.
+      const gate = expectFirst === false ? true : count > 0;
+      if ((same >= minTicks && gate) || performance.now() > deadline) {
+        resolve(count);
+      } else {
+        setTimeout(tick, 5);
+      }
+    })();
+  });
+}
+
+async function measureBatch(name, setup, opts) {
+  opts = opts || {};
+  // Clear stage first so the previous run's marks don't inflate the
+  // "already-marked" count.
+  const stage = stageEl();
+  stage.innerHTML = "";
+  // Let the extension observe the clear before we start timing.
+  await waitStable("#stage [data-rastai-rtl]", 3, false);
+  resetShadowCounts();
+  const t0 = performance.now();
+  setup();
+  const marked = await waitStable(opts.selector || "#stage [data-rastai-rtl]", 6);
+  const t1 = performance.now();
+  // Subtract the ~30ms the poll loop needs to prove stability (6 ticks
+  // × 5ms) so the reported ms is closer to actual work-until-quiet.
+  return { name, ms: Math.max(0, t1 - t0 - 30), marked,
+           callbacks: shadowCallbacks, records: shadowRecords };
+}
+
+async function measureStreaming(name, chunks) {
+  const stage = stageEl();
+  stage.innerHTML = "";
+  await waitStable("#stage [data-rastai-rtl]", 2);
+  resetShadowCounts();
+  const p = document.createElement("p");
+  stage.appendChild(p);
+  const words = ("این پاسخ در حال تولید است. کلاس Box<String> و Box<Integer> " +
+                 "دو نوع اجرایی جدا نیستند. برای اطمینان از رفتار زمان اجرا " +
+                 "به مستندات JVM مراجعه کنید. آدرس سرور 127.0.0.1:8080. " +
+                 "متد getClass() کلاس runtime را می‌دهد. " +
+                 "List<String>, Map<String, Integer>, Class<? extends Number>.").split(" ");
+  const step = Math.max(1, Math.floor(words.length / chunks));
+  const t0 = performance.now();
+  for (let i = 0; i < words.length; i += step) {
+    p.textContent = words.slice(0, i + step).join(" ");
+    // Wait one tick between chunks so the observer can fire.
+    await new Promise((r) => setTimeout(r, 8));
+  }
+  // Give the streaming quiet timer a chance to settle.
+  await new Promise((r) => setTimeout(r, 500));
+  const marked = document.querySelectorAll("#stage [data-rastai-rtl]").length;
+  const t1 = performance.now();
+  return { name, ms: t1 - t0, marked, callbacks: shadowCallbacks, records: shadowRecords };
+}
+
+function loadOne(src) {
+  return new Promise((r) => {
+    const s = document.createElement("script");
+    s.src = src;
+    s.onload = r; s.onerror = r;
+    document.head.appendChild(s);
+  });
+}
+async function loadContentScript() {
+  await loadOne("../engine.js");
+  await loadOne("../content.js");
+}
+
+async function toggle(payload) {
+  const listeners = window.__store.listeners || [];
+  for (const f of listeners) {
+    try { f({ type: "rastai-toggle", ...payload }); } catch (_) {}
+  }
+  await new Promise((r) => setTimeout(r, 30));
+}
+
+function runsBest(times) {
+  times = times.slice().sort((a, b) => a - b);
+  return { median: times[Math.floor(times.length / 2)], best: times[0], worst: times[times.length - 1] };
+}
+
+async function bench(name, setup, runs) {
+  runs = runs || 5;
+  const all = [];
+  let last = null;
+  for (let i = 0; i < runs; i++) {
+    last = await measureBatch(name, setup);
+    all.push(last.ms);
+    await new Promise((r) => setTimeout(r, 30));
+  }
+  const stats = runsBest(all);
+  return { name, ...stats, marked: last.marked, callbacks: last.callbacks, records: last.records, runs: all };
+}
+
+async function run() {
+  const setStatus = (s) => { document.getElementById("out").textContent = s; document.title = s; };
+  setStatus("loading engine…");
+  await loadOne("../engine.js");
+  setStatus("engine=" + (typeof RastAIEngine));
+  if (typeof RastAIEngine === "undefined") { throw new Error("RastAIEngine missing"); }
+  setStatus("loading content…");
+  await loadOne("../content.js");
+  setStatus("content loaded");
+  startShadowObserver();
+  setStatus("about to wait 200ms");
+  await new Promise((r) => setTimeout(r, 200));
+  setStatus("wait done, starting scenarios");
+
+  const results = [];
+  results.push(await bench("150 paragraphs", () => buildParagraphs(150)));
+  results.push(await bench("300 paragraphs", () => buildParagraphs(300)));
+  results.push(await bench("600 paragraphs", () => buildParagraphs(600), 3));
+  results.push(await bench("long conversation (~500 elements mixed)", () => buildConversation(500), 3));
+  results.push(await bench("300-row table (600 cells)", () => buildTable(300), 3));
+  results.push(await bench("1000-row table (2000 cells)", () => buildTable(1000), 2));
+
+  const s30  = await measureStreaming("streaming 30 chunks", 30);
+  const s60  = await measureStreaming("streaming 60 chunks", 60);
+  const s120 = await measureStreaming("streaming 120 chunks", 120);
+
+  // Debug-on comparison — same 300 paragraphs, debug enabled.
+  await toggle({ debug: true });
+  const bDebugOn = await bench("300 paragraphs, debug ON", () => buildParagraphs(300), 3);
+  await toggle({ debug: false });
+
+  // fontScale=130 comparison — same 300 paragraphs at 130% scale
+  // (CSS-only path; should be identical to fontScale=100).
+  await toggle({ fontScale: 130 });
+  const bScale = await bench("300 paragraphs, fontScale 130", () => buildParagraphs(300), 3);
+  await toggle({ fontScale: 100 });
+
+  // Comfortable line-spacing comparison — same 300 paragraphs.
+  await toggle({ lineSpacing: "comfortable" });
+  const bLh = await bench("300 paragraphs, lineSpacing comfortable", () => buildParagraphs(300), 3);
+  await toggle({ lineSpacing: "normal" });
+
+  // Always-mode comparison — every Persian-containing paragraph fires.
+  await toggle({ mode: "always" });
+  const bAlways = await bench("300 paragraphs, always mode", () => buildParagraphs(300), 3);
+  await toggle({ mode: "smart" });
+
+  results.push(s30, s60, s120, bDebugOn, bScale, bLh, bAlways);
+
+  const rows = [["scenario", "median ms", "best", "worst", "marked", "cb", "records"]];
+  for (const r of results) {
+    rows.push([r.name,
+      (r.median != null ? r.median.toFixed(1) : r.ms.toFixed(1)),
+      (r.best != null ? r.best.toFixed(1) : "-"),
+      (r.worst != null ? r.worst.toFixed(1) : "-"),
+      String(r.marked),
+      String(r.callbacks),
+      String(r.records)]);
+  }
+  const w = rows[0].map((_, i) => rows.reduce((m, r) => Math.max(m, String(r[i]).length), 0));
+  const lines = rows.map((r, ri) =>
+    r.map((c, i) => (i ? String(c).padStart(w[i]) : String(c).padEnd(w[i]))).join("  "));
+  const text = lines.join("\n");
+  document.getElementById("out").textContent = text;
+
+  // Emit a JSON blob the Node runner can extract deterministically.
+  const jsonEl = document.createElement("script");
+  jsonEl.type = "application/json";
+  jsonEl.id = "bench-json";
+  jsonEl.textContent = JSON.stringify(results, null, 2);
+  document.body.appendChild(jsonEl);
+
+  document.title = "DONE";
+  window.__perfComplete = true;
+}
+
+// Kick off after DOM is settled.
+document.getElementById("out").textContent = "starting…";
+document.title = "STARTING";
+setTimeout(() => {
+  document.getElementById("out").textContent = "running (in setTimeout)…";
+  document.title = "RUNNING";
+  run().catch((e) => {
+    document.getElementById("out").textContent = "ERROR: " + (e && e.stack || e);
+    document.title = "ERROR";
+    window.__perfComplete = true;
+  });
+}, 60);
+</script>
+</body>
+</html>

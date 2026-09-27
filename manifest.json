@@ -1,0 +1,84 @@
+{
+  "manifest_version": 3,
+  "name": "RastAI",
+  "version": "1.42.4",
+  "description": "راست‌چین‌سازی هوشمند فارسی + فونت Vazirmatn برای چت‌بات‌های هوش مصنوعی — Smart RTL for AI chats (Persian, Arabic, Hebrew, Urdu)",
+  "homepage_url": "https://github.com/alimirzad/RastAI",
+  "permissions": [
+    "storage",
+    "activeTab"
+  ],
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "RastAI",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://chat.deepseek.com/*",
+        "https://gemini.google.com/*",
+        "https://grok.com/*",
+        "https://perplexity.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://uxpilot.ai/*",
+        "https://www.uxpilot.ai/*"
+      ],
+      "js": [
+        "engine.js",
+        "content.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "fonts/*.woff2"
+      ],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chat.openai.com/*",
+        "https://claude.ai/*",
+        "https://chat.deepseek.com/*",
+        "https://gemini.google.com/*",
+        "https://grok.com/*",
+        "https://perplexity.ai/*",
+        "https://www.perplexity.ai/*",
+        "https://uxpilot.ai/*",
+        "https://www.uxpilot.ai/*"
+      ]
+    }
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "commands": {
+    "flip-paragraph": {
+      "suggested_key": {
+        "default": "Alt+Shift+F"
+      },
+      "description": "تغییر جهت پاراگرافی که متنش انتخاب شده / Flip the selected paragraph"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "rastai@alimirzad",
+      "strict_min_version": "121.0"
+    }
+  }
+}

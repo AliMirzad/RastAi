@@ -1,0 +1,355 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RastAI — Java generic BiDi regression tests</title>
+  <style>
+    body { font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 1000px; }
+    h1 { font-size: 18px; }
+    .suite { margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; }
+    .suite h2 { font-size: 13px; margin: 0 0 6px; }
+    .row { padding: 2px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+    .ok { color: #0a7f2e; }
+    .fail { color: #b00020; font-weight: 600; }
+    #summary { padding: 8px 14px; border-radius: 6px; margin: 12px 0; font-size: 14px; }
+    #summary.pass { background: #e7f5ec; color: #0a7f2e; }
+    #summary.fail { background: #fdeceb; color: #b00020; }
+    .fixture { position: absolute; left: -9999px; top: 0; width: 900px; font-size: 16px; line-height: 1.8; }
+
+    /* Mirror of the shipping content.js CSS that governs inline <code>,
+       marked RTL/LTR containers and our own bdi wrappers. Keeping this
+       inline lets the visual tests reflect what the user actually sees
+       once the extension has marked the page. */
+    html.rastai-rtl-on [data-rastai-rtl="rtl"]:not(table){
+      direction:rtl!important;text-align:right!important;unicode-bidi:isolate!important;}
+    html.rastai-rtl-on [data-rastai-rtl="ltr"]:not(table){
+      direction:ltr!important;text-align:left!important;unicode-bidi:isolate!important;}
+    html.rastai-rtl-on [data-rastai-rtl="rtl"] code:not(pre code):not([data-rastai-rtl]),
+    html.rastai-rtl-on [data-rastai-rtl="ltr"] code:not(pre code):not([data-rastai-rtl]){
+      direction:ltr!important;text-align:left!important;unicode-bidi:isolate!important;}
+    html.rastai-rtl-on bdi[data-rastai-iso]{
+      direction:ltr!important;unicode-bidi:isolate!important;
+      display:inline;font:inherit;color:inherit;
+      background:transparent;padding:0;margin:0;border:0;}
+  </style>
+</head>
+<body>
+  <h1>RastAI — Java generic BiDi regression tests</h1>
+  <p>Verifies inline token order for Java generics
+  (<code>Gen2&lt;Integer&gt;</code>, <code>List&lt;String&gt;</code>,
+  <code>Class&lt;? extends Number&gt;</code>, …) rendered in real RTL
+  contexts (paragraph, list item, table cell, blockquote,
+  <code>&lt;code&gt;</code> span).</p>
+
+  <div id="summary">running…</div>
+  <div id="results"></div>
+  <div id="stage" class="fixture"></div>
+
+  <script>
+    // Simulate a page where the extension is active BEFORE any tests
+    // render, so the CSS above applies to fixtures marked below.
+    document.documentElement.classList.add("rastai-rtl-on");
+  </script>
+  <script src="../engine.js"></script>
+  <script>
+    // ---- shipping regex (mirrors content.js) ----
+    // Includes v1.38 mixed-text widening AND the v1.38.1 addition of
+    // '$' and '_' to the identifier lead/inner/end classes so Java
+    // and JS identifiers like $scope and _init keep their prefix.
+    const ARROWS = "\\u2190-\\u21FF\\u27F0-\\u27FF\\u2900-\\u297F";
+    const LATIN_RUN = new RegExp(
+      "[\\[({]?[\\-/@$_]*[A-Za-z0-9_$](?:[A-Za-z0-9._,;:=!<>+*/%&|?~^#\\[\\](){}@\\\\$_ " + ARROWS + "\\-]*" +
+      "[A-Za-z0-9_$\\]})>])?|[" + ARROWS + "]+", "g");
+    const NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/" + ARROWS + "]");
+
+    // ---- test harness ----
+    const results = document.getElementById("results");
+    const summary = document.getElementById("summary");
+    const stage = document.getElementById("stage");
+    let passed = 0, failed = 0, assertions = 0;
+    const failLog = [];
+
+    function suite(name, fn) {
+      const div = document.createElement("div");
+      div.className = "suite";
+      div.innerHTML = "<h2>" + name + "</h2>";
+      results.appendChild(div);
+      const ctx = {
+        eq(label, got, want) {
+          assertions++;
+          const ok = got === want;
+          if (ok) passed++; else { failed++; failLog.push(name + " :: " + label + " want=" + JSON.stringify(want) + " got=" + JSON.stringify(got)); }
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.textContent = (ok ? "✓ " : "✗ ") + label + "  want " + JSON.stringify(want) + " got " + JSON.stringify(got);
+          div.appendChild(row);
+        },
+        assert(label, cond, detail) {
+          assertions++;
+          const ok = !!cond;
+          if (ok) passed++; else { failed++; failLog.push(name + " :: " + label + "  " + (detail||"")); }
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.textContent = (ok ? "✓ " : "✗ ") + label + (!ok && detail ? "   " + detail : "");
+          div.appendChild(row);
+        }
+      };
+      try { fn(ctx); } catch (e) {
+        failed++; failLog.push(name + " threw: " + e.message);
+        const row = document.createElement("div"); row.className = "row fail";
+        row.textContent = "✗ threw: " + e.message; div.appendChild(row);
+      }
+    }
+
+    // ---- DOM helpers ----
+    function wrapWith(text) {
+      LATIN_RUN.lastIndex = 0;
+      const parts = []; let last = 0, m;
+      while ((m = LATIN_RUN.exec(text))) {
+        const iso = NEEDS_ISO.test(m[0]);
+        if (!iso) continue;
+        if (m.index > last) parts.push({t: text.slice(last, m.index), iso: false});
+        parts.push({t: m[0], iso: true});
+        last = LATIN_RUN.lastIndex;
+      }
+      if (last < text.length) parts.push({t: text.slice(last), iso: false});
+      if (!parts.some(p => p.iso)) return escapeHTML(text);
+      return parts.map(p => p.iso
+        ? '<bdi dir="ltr" data-iso="1">' + escapeHTML(p.t) + '</bdi>'
+        : escapeHTML(p.t)).join("");
+    }
+    function escapeHTML(s) { return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+    // Mark helper — the extension always sets both `dir` and its own
+    // `data-rastai-rtl` attribute. The CSS rules key off the latter.
+    function markRTL(el) {
+      el.setAttribute("dir", "rtl");
+      el.setAttribute("data-rastai-rtl", "rtl");
+    }
+
+    function makeParagraph(text, kind) {
+      stage.innerHTML = "";
+      let host, target;
+      const wrapped = wrapWith(text);
+      switch (kind) {
+        case "list": {
+          const ul = document.createElement("ul"); markRTL(ul);
+          const li = document.createElement("li"); markRTL(li);
+          li.innerHTML = wrapped;
+          ul.appendChild(li); target = li; host = ul; break;
+        }
+        case "table": {
+          const tbl = document.createElement("table"); markRTL(tbl);
+          const tr = document.createElement("tr");
+          const td = document.createElement("td"); markRTL(td);
+          td.innerHTML = wrapped;
+          tr.appendChild(td); tbl.appendChild(tr);
+          target = td; host = tbl; break;
+        }
+        case "blockquote": {
+          const bq = document.createElement("blockquote"); markRTL(bq);
+          bq.innerHTML = wrapped;
+          target = bq; host = bq; break;
+        }
+        case "code-span": {
+          // Inline <code> inside a marked RTL paragraph. The extension
+          // NEVER restructures inside <code>, so no bdi wrapping — the
+          // CSS rule on `code:not(pre code)` is what keeps the content
+          // in LTR reading order. This suite proves it does.
+          const p = document.createElement("p"); markRTL(p);
+          const code = document.createElement("code"); code.textContent = text;
+          p.appendChild(code); target = code; host = p; break;
+        }
+        default: {
+          const p = document.createElement("p"); markRTL(p);
+          p.innerHTML = wrapped;
+          target = p; host = p; break;
+        }
+      }
+      stage.appendChild(host);
+      return target;
+    }
+
+    function nodeAt(el, idx) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+      let n, offset = idx;
+      while ((n = walker.nextNode())) {
+        if (offset < n.data.length) return { node: n, offset: offset };
+        offset -= n.data.length;
+      }
+      return null;
+    }
+    function xOfIdx(el, idx) {
+      const h = nodeAt(el, idx);
+      if (!h) return NaN;
+      const r = document.createRange();
+      r.setStart(h.node, h.offset); r.setEnd(h.node, h.offset + 1);
+      return r.getBoundingClientRect().left;
+    }
+    // Assert that within `text`, the character at index `i` is visually
+    // LEFT of the character at index `j` when rendered in `kind`.
+    function ltrOrder(t, kind, text, i, j, label) {
+      const el = makeParagraph(text, kind);
+      const xi = xOfIdx(el, i), xj = xOfIdx(el, j);
+      t.assert(kind + ": " + label + "  (idx " + i + "<" + j + " → x " + xi.toFixed(1) + "<" + xj.toFixed(1) + ")",
+        xi < xj,
+        "chars '" + text[i] + "'@x=" + xi + "  '" + text[j] + "'@x=" + xj);
+    }
+
+    // Assert that the wrapping produced ONE bdi containing exactly `phrase`.
+    function oneBdiForPhrase(t, text, phrase) {
+      const el = makeParagraph(text, "paragraph");
+      const bdis = Array.from(el.querySelectorAll('bdi[data-iso="1"]'));
+      const texts = bdis.map(b => b.textContent);
+      t.assert("bdi for '" + phrase + "' in: " + text.slice(0, 40) + "…",
+        texts.includes(phrase),
+        "bdis were: " + JSON.stringify(texts));
+    }
+
+    // ---- suites ----
+
+    suite("regex captures — Java generics as one run", (t) => {
+      // Every case is asserted to appear as a single bdi.
+      oneBdiForPhrase(t, "Gen2<?> → کلاس Gen2 را بررسی کن", "Gen2<?>");
+      oneBdiForPhrase(t, "Gen2<Integer> → کلاس را بررسی کن", "Gen2<Integer>");
+      oneBdiForPhrase(t, "List<String> و Set<Integer>", "List<String>");
+      oneBdiForPhrase(t, "List<String> و Set<Integer>", "Set<Integer>");
+      oneBdiForPhrase(t, "Map<String, Integer> را استفاده کن", "Map<String, Integer>");
+      oneBdiForPhrase(t, "Class<? extends Number> را بررسی کن", "Class<? extends Number>");
+      oneBdiForPhrase(t, "Class<? super Integer> را بررسی کن", "Class<? super Integer>");
+      oneBdiForPhrase(t, "List<? extends Number>, Set<Integer> را ببین", "List<? extends Number>, Set<Integer>");
+    });
+
+    // Visual order: for each generic, the identifier's first char must
+    // be visually LEFT of the closing '>'. This is the specific failure
+    // shape the user described ('<Integer>Gen2' visual reorder).
+    suite("visual — paragraph RTL", (t) => {
+      const cases = [
+        { text: "Gen2<?> → کلاس Gen2 را بررسی کن",           first: 0,  last: 6 },
+        { text: "Gen2<Integer> → کلاس را بررسی کن",           first: 0,  last: 12 },
+        { text: "List<String> و Set<Integer>",                first: 0,  last: 11 },
+        { text: "Map<String, Integer> را استفاده کن",         first: 0,  last: 19 },
+        { text: "Class<? extends Number> را بررسی کن",        first: 0,  last: 22 },
+        { text: "Class<? super Integer> را بررسی کن",         first: 0,  last: 21 },
+        { text: "List<? extends Number>, Set<Integer> را ببین", first: 0, last: 35 }
+      ];
+      for (const c of cases) ltrOrder(t, "paragraph", c.text, c.first, c.last,
+        "'" + c.text.slice(c.first, c.first+1) + "' < '" + c.text.slice(c.last, c.last+1) + "'");
+    });
+
+    suite("visual — list item, table cell, blockquote", (t) => {
+      const shapes = [
+        { text: "Gen2<Integer> را استفاده کن", first: 0, last: 12 },
+        { text: "Map<String, Integer> کاربرد دارد", first: 0, last: 19 }
+      ];
+      for (const c of shapes) {
+        ltrOrder(t, "list",       c.text, c.first, c.last, "first<last (li)");
+        ltrOrder(t, "table",      c.text, c.first, c.last, "first<last (td)");
+        ltrOrder(t, "blockquote", c.text, c.first, c.last, "first<last (bq)");
+      }
+    });
+
+    // <code> spans: content.js never restructures inside <code>, so the
+    // browser's own BiDi has to handle it. We verify what the browser
+    // does alone — same LTR order — for the specific cases.
+    suite("visual — inline <code> span (no wrapping)", (t) => {
+      ltrOrder(t, "code-span", "Gen2<Integer>", 0, 12, "code Gen2<Integer> — G left of >");
+      ltrOrder(t, "code-span", "List<String>", 0, 11, "code List<String> — L left of >");
+    });
+
+    // Regression: previously-pinned patterns must still render LTR.
+    suite("regression — v1.37/v1.38 pins still hold", (t) => {
+      const cases = [
+        "از Java, Spring استفاده می‌کنیم.",
+        "پروتکل GET, POST را ببین.",
+        "نوع String, Integer.",
+        "مقادیر key: value را بخوان.",
+        "پورت 127.0.0.1:8080 را بررسی.",
+        "فلگ‌های --force, --verbose بزن.",
+        "معماری foo/bar داریم."
+      ];
+      for (const text of cases) {
+        const el = makeParagraph(text, "paragraph");
+        // pick the first Latin letter and the last one before the trailing Persian
+        let firstLatin = -1, lastLatin = -1;
+        for (let i = 0; i < text.length; i++) {
+          const c = text.charCodeAt(i);
+          if ((c>=65&&c<=90)||(c>=97&&c<=122)||(c>=48&&c<=57)) { if (firstLatin<0) firstLatin=i; lastLatin=i; }
+        }
+        const xf = xOfIdx(el, firstLatin), xl = xOfIdx(el, lastLatin);
+        t.assert("LTR order in: " + text.slice(0, 40) + "…", xf < xl,
+          "xf=" + xf + " xl=" + xl);
+      }
+    });
+
+    // Copy safety.
+    suite("copy safety — textContent equals input", (t) => {
+      const cases = [
+        "Gen2<?> → کلاس Gen2 را بررسی کن",
+        "Gen2<Integer> → کلاس را بررسی کن",
+        "List<String> و Set<Integer>",
+        "Map<String, Integer> را استفاده کن",
+        "Class<? extends Number> را بررسی کن",
+        "Class<? super Integer> را بررسی کن",
+        "List<? extends Number>, Set<Integer>"
+      ];
+      for (const s of cases) {
+        const p = makeParagraph(s, "paragraph");
+        t.eq("textContent for: " + s.slice(0, 40) + "…", p.textContent, s);
+      }
+    });
+
+    // Streaming: growing a generic never breaks structure.
+    suite("streaming — growing generic renders each stage", (t) => {
+      const stages = [
+        "Gen2<",
+        "Gen2<I",
+        "Gen2<In",
+        "Gen2<Integer",
+        "Gen2<Integer>",
+        "Gen2<Integer> → کلاس"
+      ];
+      for (const s of stages) {
+        const p = makeParagraph(s, "paragraph");
+        t.eq("stage textContent: " + s, p.textContent, s);
+      }
+    });
+
+    // Teardown.
+    suite("teardown — bdi removal restores identical text", (t) => {
+      const s = "کلاس Map<String, Integer> و List<? extends Number> را";
+      const p = makeParagraph(s, "paragraph");
+      const bdis = Array.from(p.querySelectorAll('bdi[data-iso="1"]'));
+      t.assert("wrappers inserted", bdis.length >= 2, "bdi count=" + bdis.length);
+      for (const b of bdis) b.replaceWith(document.createTextNode(b.textContent));
+      p.normalize();
+      t.eq("textContent after teardown", p.textContent, s);
+      t.eq("no bdi remains", p.querySelectorAll("bdi").length, 0);
+    });
+
+    // Java-identifier prefixes ($, _) must not be dropped.
+    suite("Java identifier lead — $ and _ preserved", (t) => {
+      oneBdiForPhrase(t, "شناسه $scope, $rootScope چیست", "$scope, $rootScope");
+      oneBdiForPhrase(t, "متد _init(), _cleanup() صدا زده", "_init(), _cleanup()");
+    });
+
+    // No over-isolation: nested generic still ONE bdi.
+    suite("no over-isolation — nested generic stays one bdi", (t) => {
+      const s = "کلاس List<Map<String, Integer>> و Set<List<String>>";
+      const p = makeParagraph(s, "paragraph");
+      const bdis = Array.from(p.querySelectorAll('bdi[data-iso="1"]')).map(b => b.textContent);
+      t.assert("List<Map<String, Integer>> is one bdi", bdis.includes("List<Map<String, Integer>>"),
+        JSON.stringify(bdis));
+      t.assert("Set<List<String>> is one bdi", bdis.includes("Set<List<String>>"),
+        JSON.stringify(bdis));
+    });
+
+    // ---- finish ----
+    summary.className = failed ? "fail" : "pass";
+    summary.textContent = (failed ? "FAIL — " : "OK — ") + passed + "/" + assertions + " assertions passed" +
+      (failed ? " (" + failed + " failed)" : "");
+    document.title = (failed ? "FAIL " : "OK ") + passed + "/" + assertions;
+    window.__testResults = { passed, failed, assertions, failLog };
+  </script>
+</body>
+</html>

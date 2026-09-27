@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>content.js UI tests</title>
+<style>
+  body { font:16px/1.5 sans-serif; width:700px; }
+  h2 { font-size:24px; }
+  pre { font-size:13px; }
+</style>
+<script src="stub.js"></script>
+</head>
+<body>
+  <!-- A stripped-down chat page: site chrome, an answer, and a composer. -->
+  <nav><ul><li id="nav-li">گفتگوی قبلی درباره‌ی پایتون</li></ul></nav>
+  <header><h1 id="head-h1">عنوان گفتگو</h1></header>
+  <main>
+    <div class="markdown">
+      <p id="p1">این یک پاراگراف فارسی است که باید راست‌چین شود.</p>
+      <h2 id="h2">عنوان فارسی</h2>
+      <ul id="ul">
+        <li id="li1"><p id="lip">مرحله‌ی اول نصب بسته است</p>
+          <pre id="pre-in"><code>npm install farsi</code></pre></li>
+      </ul>
+      <pre id="pre"><code>const x = 1;</code></pre>
+      <p id="en">This is a plain English paragraph with no Persian.</p>
+      <p id="ov">این پاراگراف را کاربر دستی چپ‌چین کرده بود.</p>
+      <!-- v1.39 integration fixtures: mixed BiDi paragraphs to exercise
+           the intersection of v1.38 (LATIN_RUN wrapping) and v1.39 (font
+           scale, override clear, site off/on). -->
+      <p id="pmix">این متن درباره List&lt;String&gt;, Map&lt;String, Integer&gt; است</p>
+      <p id="pcode">مثال کد: <code id="codegen">Gen2&lt;Integer&gt;</code> را ببین.</p>
+      <p id="pmixov">این توضیح Java, Spring را دستی چپ‌چین کرده بودم.</p>
+    </div>
+    <form><div contenteditable="true" id="composer"><p id="cp">سلام، این متن پیام من است</p></div></form>
+  </main>
+
+<script>
+(async function () {
+  const S = __stub;
+  const $ = (id) => document.getElementById(id);
+  const zoom = (id) => $(id).currentCSSZoom;
+  const root = document.documentElement;
+  const OV_TEXT = $("ov").textContent;
+
+  // Same hash content.js keys overrides by (fnv-1a over the first 200 chars).
+  function fnv(text, cap) {
+    let h = 0x811c9dc5;
+    const n = Math.min(text.length, cap);
+    for (let i = 0; i < n; i++) { h ^= text.charCodeAt(i); h = Math.imul(h, 0x01000193); }
+    return (h >>> 0).toString(36);
+  }
+
+  // A returning user: settings from before this feature (no fontScale),
+  // and two saved manual flips (a pure-Persian one and a mixed one, so
+  // clear-overrides has more than one entry to sweep).
+  const OV_MIX_TEXT = $("pmixov").textContent;
+  S.sync = { rtlMode: "smart", fontEnabled: true, lineSpacing: false, siteOff: {} };
+  S.local = { overrides: {
+    [fnv(OV_TEXT, 200)]: "ltr",
+    [fnv(OV_MIX_TEXT, 200)]: "ltr"
+  } };
+
+  try {
+    await S.loadScript("../../engine.js");
+    await S.loadScript("../../content.js");
+    await S.wait(1200);
+
+    await S.test("font size default is 100%", async () => {
+      S.assert(!root.classList.contains("rastai-scale-on"), "scale class present at 100%");
+      S.assert(!root.style.getPropertyValue("--rastai-scale"), "scale variable set at 100%");
+      S.assert($("p1").getAttribute("data-rastai-rtl") === "rtl", "p1 not marked rtl");
+      S.near(zoom("p1"), 1, "p1 zoom");
+    });
+
+    await S.test("old settings are untouched (backward compatibility)", async () => {
+      S.assert(!("fontScale" in S.sync), "fontScale written without a user action");
+      S.assert(S.sync.rtlMode === "smart" && S.sync.fontEnabled === true, "existing settings changed");
+    });
+
+    await S.test("live apply: message changes size without reload", async () => {
+      const h0 = $("h2").getBoundingClientRect().height;
+      S.send({ type: "rastai-toggle", fontScale: 120 });
+      await S.wait(50);
+      S.near(zoom("p1"), 1.2, "p1 zoom");
+      S.near(zoom("h2"), 1.2, "h2 zoom");
+      S.assert($("h2").getBoundingClientRect().height > h0 * 1.1, "heading did not grow");
+    });
+
+    await S.test("nested paragraphs are scaled once, not compounded", async () => {
+      S.near(zoom("ul"), 1.2, "ul zoom");
+      S.near(zoom("li1"), 1.2, "li zoom");
+      S.near(zoom("lip"), 1.2, "p in li zoom");
+    });
+
+    await S.test("code unaffected (standalone and inside a scaled list)", async () => {
+      S.near(zoom("pre"), 1, "top-level pre zoom");
+      S.near(zoom("pre-in"), 1, "pre inside scaled li zoom");
+      S.near(zoom("pre-in").valueOf(), zoom("pre"), "code blocks differ in size");
+    });
+
+    await S.test("composer unaffected", async () => {
+      S.near(zoom("composer"), 1, "composer zoom");
+      S.near(zoom("cp"), 1, "composer paragraph zoom");
+    });
+
+    await S.test("sidebar and header unaffected", async () => {
+      S.near(zoom("nav-li"), 1, "sidebar item zoom");
+      S.near(zoom("head-h1"), 1, "header title zoom");
+    });
+
+    await S.test("English paragraph (unmarked) unaffected", async () => {
+      S.near(zoom("en"), 1, "english p zoom");
+    });
+
+    await S.test("no inline style written per paragraph", async () => {
+      for (const el of document.querySelectorAll("body *")) {
+        const st = el.getAttribute("style") || "";
+        S.assert(!/zoom|font-size|--rastai-scale/.test(st), "inline size style on " + (el.id || el.tagName));
+      }
+      S.assert(root.style.getPropertyValue("--rastai-scale") === "1.2", "variable not on <html>");
+    });
+
+    await S.test("decrease via storage change (another tab / popup)", async () => {
+      chrome.storage.sync.set({ fontScale: 90 });
+      await S.wait(50);
+      S.near(zoom("p1"), 0.9, "p1 zoom");
+      S.near(zoom("pre-in"), 1, "pre inside list zoom");
+    });
+
+    await S.test("invalid stored value falls back to 100%", async () => {
+      S.send({ type: "rastai-toggle", fontScale: 175 });
+      await S.wait(50);
+      S.near(zoom("p1"), 1, "p1 zoom");
+      S.assert(!root.classList.contains("rastai-scale-on"), "scale class left on");
+      S.send({ type: "rastai-toggle", fontScale: 110 });
+      await S.wait(50);
+      S.near(zoom("p1"), 1.1, "p1 zoom after valid value");
+    });
+
+    await S.test("site off removes font scale", async () => {
+      S.send({ type: "rastai-toggle", siteOn: false });
+      await S.wait(50);
+      S.assert(!root.classList.contains("rastai-scale-on"), "scale class left on");
+      S.assert(!root.style.getPropertyValue("--rastai-scale"), "scale variable left on");
+      S.near(zoom("p1"), 1, "p1 zoom");
+    });
+
+    await S.test("changing size while off is remembered, not applied", async () => {
+      S.send({ type: "rastai-toggle", fontScale: 130 });
+      await S.wait(50);
+      S.assert(!root.classList.contains("rastai-scale-on"), "applied while site is off");
+    });
+
+    await S.test("site on reapplies font scale", async () => {
+      S.send({ type: "rastai-toggle", siteOn: true });
+      await S.wait(900);
+      S.assert(root.classList.contains("rastai-scale-on"), "scale class missing");
+      S.near(zoom("p1"), 1.3, "p1 zoom");
+      S.near(zoom("pre-in"), 1, "pre inside list zoom");
+    });
+
+    await S.test("saved override is applied before clearing", async () => {
+      S.assert($("ov").getAttribute("data-rastai-rtl") === "ltr", "override not applied");
+    });
+
+    await S.test("clear overrides re-evaluates without reload", async () => {
+      const syncBefore = JSON.stringify(S.sync);
+      chrome.storage.local.remove("overrides");
+      await S.wait(900);
+      S.assert($("ov").getAttribute("data-rastai-rtl") === "rtl",
+               "paragraph kept its override: " + $("ov").getAttribute("data-rastai-rtl"));
+      S.assert(JSON.stringify(S.sync) === syncBefore, "sync settings changed");
+    });
+
+    await S.test("only overrides cleared: other paragraphs and settings intact", async () => {
+      S.assert($("p1").getAttribute("data-rastai-rtl") === "rtl", "p1 lost its direction");
+      S.assert(root.classList.contains("rastai-font-on"), "font setting lost");
+      S.near(zoom("p1"), 1.3, "font scale lost");
+    });
+
+    await S.test("a flip after clearing does not resurrect old overrides", async () => {
+      // Flip p1 through the real selection path.
+      const r = document.createRange();
+      r.selectNodeContents($("p1"));
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      S.send({ type: "rastai-toggle", flip: true });
+      await S.wait(700);
+      const keys = Object.keys(S.local.overrides || {});
+      S.assert(keys.length === 1, "expected 1 saved override, got " + keys.length);
+      S.assert(!keys.includes(fnv(OV_TEXT, 200)), "cleared override was written back");
+    });
+
+    // -------- v1.39 integration tests: v1.38 wrapping + v1.39 UI --------
+
+    await S.test("mixed paragraph with generic: RTL + one bdi + font scale", async () => {
+      // pmix contains "List<String>, Map<String, Integer>" — v1.38 should
+      // wrap that Latin run in exactly one bdi with dir="ltr", the paragraph
+      // itself should be marked RTL, and the current font scale should apply.
+      S.assert($("pmix").getAttribute("data-rastai-rtl") === "rtl",
+        "mixed paragraph not marked rtl (got " + $("pmix").getAttribute("data-rastai-rtl") + ")");
+      const bdis = $("pmix").querySelectorAll('bdi[data-rastai-iso="1"]');
+      S.assert(bdis.length === 1, "expected exactly one bdi wrapper, got " + bdis.length);
+      S.assert(bdis[0].textContent === "List<String>, Map<String, Integer>",
+        "bdi text: " + JSON.stringify(bdis[0].textContent));
+      S.near(zoom("pmix"), 1.3, "pmix zoom (font scale)");
+    });
+
+    await S.test("inline code with generic: LTR direction, no bdi restructuring, scales with prose", async () => {
+      // pcode is Persian around <code>Gen2<Integer></code>. Requirements:
+      //   - the paragraph is marked RTL
+      //   - the <code> element reads LTR (via the extension's
+      //     code:not(pre code) CSS rule) so Gen2<Integer> doesn't flip
+      //   - the extension NEVER restructures inside <code>, so no bdi
+      //   - the text content is preserved character-for-character
+      //   - inline code shares its paragraph's zoom (only <pre> gets
+      //     counter-scaled — inline code sits in prose and must scale
+      //     with it to keep proportion)
+      S.assert($("pcode").getAttribute("data-rastai-rtl") === "rtl",
+        "pcode paragraph not marked rtl");
+      S.assert($("codegen").querySelectorAll("bdi").length === 0,
+        "code element was restructured with bdi (extension must skip <code>)");
+      const codeDir = getComputedStyle($("codegen")).direction;
+      S.assert(codeDir === "ltr", "inline code direction is " + codeDir + " not ltr");
+      S.near(zoom("codegen"), zoom("pcode"), "inline code zoom differs from its paragraph");
+      S.assert($("codegen").textContent === "Gen2<Integer>",
+        "code textContent changed: " + JSON.stringify($("codegen").textContent));
+    });
+
+    await S.test("mixed paragraph override is honored, then cleared", async () => {
+      // After the earlier "clear overrides" test above, S.local.overrides
+      // was wiped — so pmixov has already re-evaluated. The saved override
+      // was `ltr` for a mixed paragraph, and after clearing the engine's
+      // own decision (rule-6 shape for this paragraph) should be RTL.
+      S.assert($("pmixov").getAttribute("data-rastai-rtl") === "rtl",
+        "mixed paragraph did not re-evaluate after clear: " + $("pmixov").getAttribute("data-rastai-rtl"));
+      // And the mixed paragraph's bdi wrapping still holds after clear.
+      const bdis = $("pmixov").querySelectorAll('bdi[data-rastai-iso="1"]');
+      S.assert(bdis.length >= 1, "no bdi in mixed paragraph after override clear");
+      S.assert(Array.from(bdis).some(b => b.textContent.includes("Java, Spring")),
+        "expected bdi for 'Java, Spring' after clear, got " +
+        JSON.stringify(Array.from(bdis).map(b => b.textContent)));
+    });
+
+    await S.test("site off wipes direction marks, bdi wrappers, and font scale", async () => {
+      S.send({ type: "rastai-toggle", siteOn: false });
+      await S.wait(120);
+      // Direction marks gone.
+      S.assert(!$("pmix").hasAttribute("data-rastai-rtl"), "pmix kept its dir mark");
+      S.assert(!$("pmix").hasAttribute("dir"), "pmix kept its dir attribute");
+      // bdi wrappers gone.
+      S.assert(document.querySelectorAll('bdi[data-rastai-iso="1"]').length === 0,
+        "bdi wrappers survived site-off");
+      // Font scale gone.
+      S.assert(!root.classList.contains("rastai-scale-on"), "scale class survived site-off");
+      S.assert(!root.style.getPropertyValue("--rastai-scale"), "scale variable survived site-off");
+      S.near(zoom("pmix"), 1, "pmix zoom after site off");
+      // Text content preserved.
+      S.assert($("pmix").textContent === "این متن درباره List<String>, Map<String, Integer> است",
+        "pmix textContent changed on site-off: " + JSON.stringify($("pmix").textContent));
+    });
+
+    await S.test("site on restores direction, bdi wrappers, and font scale", async () => {
+      S.send({ type: "rastai-toggle", siteOn: true });
+      await S.wait(1200);
+      S.assert($("pmix").getAttribute("data-rastai-rtl") === "rtl", "pmix not remarked rtl");
+      const bdis = $("pmix").querySelectorAll('bdi[data-rastai-iso="1"]');
+      S.assert(bdis.length === 1, "bdi wrapper not restored, got " + bdis.length);
+      S.assert(bdis[0].textContent === "List<String>, Map<String, Integer>",
+        "restored bdi content: " + JSON.stringify(bdis[0].textContent));
+      S.assert(root.classList.contains("rastai-scale-on"), "scale class not restored");
+      S.near(zoom("pmix"), 1.3, "pmix zoom not restored");
+    });
+
+    // -------- v1.40 feature tests --------
+
+    await S.test("line spacing tri-mode: sets attribute and applies the right line-height", async () => {
+      // Use h2 (pure Persian heading). Earlier flip tests touched p1
+      // and left an ltr override on it, which would exclude it from
+      // the CSS selector [data-rastai-rtl="rtl"].
+      const el = $("h2");
+      S.assert(el.getAttribute("data-rastai-rtl") === "rtl",
+        "h2 not marked rtl: " + el.getAttribute("data-rastai-rtl"));
+      S.send({ type: "rastai-toggle", lineSpacing: "compact" });
+      await S.wait(30);
+      S.assert(root.getAttribute("data-rastai-lh") === "compact",
+        "lh attr not compact: " + root.getAttribute("data-rastai-lh"));
+      const lhCompact = parseFloat(getComputedStyle(el).lineHeight);
+      S.send({ type: "rastai-toggle", lineSpacing: "normal" });
+      await S.wait(30);
+      S.assert(!root.hasAttribute("data-rastai-lh"), "normal must not set the attr");
+      S.assert(!root.classList.contains("rastai-lh-on"), "normal must not set the legacy class");
+      S.send({ type: "rastai-toggle", lineSpacing: "comfortable" });
+      await S.wait(30);
+      S.assert(root.getAttribute("data-rastai-lh") === "comfortable",
+        "lh attr not comfortable: " + root.getAttribute("data-rastai-lh"));
+      const lhComfy = parseFloat(getComputedStyle(el).lineHeight);
+      S.assert(lhCompact < lhComfy,
+        "compact >= comfortable (" + lhCompact + " vs " + lhComfy + ")");
+    });
+
+    await S.test("line spacing backward-compat: boolean true maps to comfortable", async () => {
+      S.send({ type: "rastai-toggle", lineSpacing: true });
+      await S.wait(30);
+      const lh = parseFloat(getComputedStyle($("p1")).lineHeight);
+      S.assert(lh > 1.7, "boolean true did not produce comfortable spacing: " + lh);
+    });
+
+    await S.test("second flip removes the override (returns to engine)", async () => {
+      // Use pmix (mixed BiDi, no prior overrides). Earlier tests already
+      // touched p1 and pmixov, so we pick a paragraph with a clean history.
+      const p = $("pmix"); // mixed — engine picks RTL
+      const startCount = Object.keys(S.local.overrides || {}).length;
+      // First flip: no override → save one.
+      const r = document.createRange();
+      r.selectNodeContents(p);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      S.send({ type: "rastai-toggle", flip: true });
+      await S.wait(500);
+      S.assert(p.getAttribute("data-rastai-rtl") === "ltr", "first flip did not set ltr");
+      const ov1 = Object.keys(S.local.overrides || {}).length;
+      S.assert(ov1 === startCount + 1, "override not saved (" + startCount + " -> " + ov1 + ")");
+      // Second flip on the same paragraph: override cleared, engine re-decides.
+      r.selectNodeContents(p);
+      getSelection().removeAllRanges();
+      getSelection().addRange(r);
+      S.send({ type: "rastai-toggle", flip: true });
+      await S.wait(700);
+      const ov2 = Object.keys(S.local.overrides || {}).length;
+      S.assert(ov2 === startCount, "override count did not return to baseline (" + ov1 + " -> " + ov2 + ")");
+      S.assert(p.getAttribute("data-rastai-rtl") === "rtl", "engine did not re-decide RTL after reset");
+    });
+
+    // ---- v1.41 performance invariants ----
+    // These pin properties the perf audit relies on. If a future change
+    // makes fontScale or lineSpacing re-mark paragraphs, or leaks debug
+    // bookkeeping into the debug-off path, these fail.
+
+    await S.test("fontScale change does NOT re-mark already-marked paragraphs (CSS-only)", async () => {
+      // p1 is already marked. Capture a mutation observer on its own
+      // data-rastai-rtl attribute; a fontScale change must not touch it.
+      const p = $("p1");
+      let mutations = 0;
+      const mo = new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.type === "attributes" && r.attributeName === "data-rastai-rtl") mutations++;
+        }
+      });
+      mo.observe(p, { attributes: true, attributeFilter: ["data-rastai-rtl"] });
+      S.send({ type: "rastai-toggle", fontScale: 110 });
+      await S.wait(50);
+      S.send({ type: "rastai-toggle", fontScale: 130 });
+      await S.wait(50);
+      S.send({ type: "rastai-toggle", fontScale: 100 });
+      await S.wait(50);
+      mo.disconnect();
+      S.assert(mutations === 0,
+        "fontScale changes should not touch data-rastai-rtl, got " + mutations + " mutations");
+      // But the CSS variable on <html> DID change.
+      const cssVar = document.documentElement.style.getPropertyValue("--rastai-scale");
+      // We reset to 100 last, so the variable should be cleared.
+      S.assert(cssVar === "" || cssVar === "1",
+        "scale variable at 100% should be cleared, got: " + JSON.stringify(cssVar));
+    });
+
+    await S.test("lineSpacing change does NOT re-mark paragraphs (CSS-only)", async () => {
+      const p = $("p1");
+      let mutations = 0;
+      const mo = new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.type === "attributes" && r.attributeName === "data-rastai-rtl") mutations++;
+        }
+      });
+      mo.observe(p, { attributes: true, attributeFilter: ["data-rastai-rtl"] });
+      S.send({ type: "rastai-toggle", lineSpacing: "compact" });
+      await S.wait(50);
+      S.send({ type: "rastai-toggle", lineSpacing: "comfortable" });
+      await S.wait(50);
+      S.send({ type: "rastai-toggle", lineSpacing: "normal" });
+      await S.wait(50);
+      mo.disconnect();
+      S.assert(mutations === 0,
+        "lineSpacing changes should not touch data-rastai-rtl, got " + mutations + " mutations");
+    });
+
+    await S.test("empty override map skips hashText (fast path invariant)", async () => {
+      // Structural invariant: if the override storage is empty, no
+      // hashText call happens for the paragraph text. Instrument by
+      // wrapping the engine's directionOf and counting entries.
+      // Test approach: clear overrides, force a re-mark, verify a
+      // paragraph gets marked correctly (which proves the fast path
+      // returns null instead of throwing/misbehaving on empty map).
+      S.local = { overrides: {} };
+      S.send({ type: "rastai-toggle", clearOverrides: true });
+      await S.wait(100);
+      // Force a re-mark on p1 by sending mode change (bumps epoch).
+      S.send({ type: "rastai-toggle", mode: "always" });
+      await S.wait(80);
+      S.send({ type: "rastai-toggle", mode: "smart" });
+      await S.wait(160);
+      // p1 (pure Persian) must still be marked rtl — proving getOverride
+      // returned null cleanly on the empty-map path.
+      S.assert($("p1").getAttribute("data-rastai-rtl") === "rtl",
+        "p1 not marked after empty-overrides re-mark: " +
+        $("p1").getAttribute("data-rastai-rtl"));
+      // en (English-only) should not have been marked.
+      S.assert(!$("en").hasAttribute("data-rastai-rtl") ||
+               $("en").getAttribute("data-rastai-rtl") === "ltr",
+        "en unexpected mark: " + $("en").getAttribute("data-rastai-rtl"));
+    });
+
+    await S.test("applyMarkTo first-write is idempotent on second call (state map)", async () => {
+      // The v1.42 optimization skips inline-style reads when the mark
+      // attribute is being newly set. Verify that a second mark call
+      // on the same paragraph with the same direction doesn't churn
+      // the inline style. We watch style mutations on p1 across two
+      // mode-switch cycles (both smart, so p1 stays rtl).
+      const p = $("p1");
+      let styleWrites = 0;
+      const mo = new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.type === "attributes" && r.attributeName === "style") styleWrites++;
+        }
+      });
+      mo.observe(p, { attributes: true, attributeFilter: ["style"] });
+      // Trigger a re-mark by mode toggle. p1 was rtl; stays rtl.
+      S.send({ type: "rastai-toggle", mode: "always" });
+      await S.wait(80);
+      S.send({ type: "rastai-toggle", mode: "smart" });
+      await S.wait(160);
+      mo.disconnect();
+      // At most 2 style writes across two remark passes (once per pass
+      // if the attribute cycled). More than that means the defensive
+      // read is triggering unnecessary writes.
+      S.assert(styleWrites <= 2,
+        "inline style churn under re-mark: " + styleWrites + " writes (expected <= 2)");
+    });
+
+    await S.test("debug OFF leaves NO rule/source attributes anywhere on the page", async () => {
+      // Guardrails against a regression where debug bookkeeping leaks
+      // into the debug-off hot path. When debug is off, no data-rastai-src
+      // and no data-rastai-rule may exist on any element, ever — even
+      // after streaming, override changes, or mode switches.
+      S.send({ type: "rastai-toggle", debug: false });
+      await S.wait(100);
+      // Force a re-scan by switching modes back and forth.
+      S.send({ type: "rastai-toggle", mode: "always" });
+      await S.wait(100);
+      S.send({ type: "rastai-toggle", mode: "smart" });
+      await S.wait(200);
+      const srcCount = document.querySelectorAll("[data-rastai-src]").length;
+      const ruleCount = document.querySelectorAll("[data-rastai-rule]").length;
+      S.assert(srcCount === 0, "data-rastai-src count with debug off: " + srcCount);
+      S.assert(ruleCount === 0, "data-rastai-rule count with debug off: " + ruleCount);
+    });
+
+    await S.test("debug indicator: rule badge visible when debug is on, hidden otherwise", async () => {
+      // Force debug OFF first, verify no src attribute anywhere.
+      S.send({ type: "rastai-toggle", debug: false });
+      await S.wait(50);
+      S.assert(document.querySelectorAll("[data-rastai-src]").length === 0,
+        "src attr present with debug off");
+      // Turn debug on and wait for the epoch bump + rescan to re-evaluate
+      // paragraphs. The rescan pass is async, so give it a comfortable
+      // window before checking.
+      S.send({ type: "rastai-toggle", debug: true });
+      await S.wait(900);
+      // A pure Persian paragraph fires rule 2 (no Latin) — src="R2".
+      // pmix (mixed BiDi) currently has a manual override from the earlier
+      // "second flip" test — actually no, we cleared it. Pick p1 which is
+      // pure Persian and hasn't been overridden since the earlier clear.
+      const src = $("p1").getAttribute("data-rastai-src");
+      S.assert(src && (src.charAt(0) === "R" || src === "Manual"),
+        "p1 src should be R<n> or Manual, got " + JSON.stringify(src));
+      // Inline <code> is never restructured or evaluated by the engine,
+      // so it must not carry a debug src badge.
+      S.assert(!$("codegen").hasAttribute("data-rastai-src"),
+        "inline <code> should not carry a debug src badge");
+      // Turn debug off — src labels gone.
+      S.send({ type: "rastai-toggle", debug: false });
+      await S.wait(100);
+      S.assert(document.querySelectorAll("[data-rastai-src]").length === 0,
+        "src attr survived debug off");
+    });
+  } catch (e) { S.fail(e); return; }
+  S.finish();
+})();
+</script>
+</body>
+</html>

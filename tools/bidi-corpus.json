@@ -1,0 +1,178 @@
+[
+ { "prose": "از Java, Spring استفاده می‌کنیم.", "expect": "rtl", "category": "comma-english", "source": "synthetic", "note": "two Latin tokens comma-joined inside Persian" },
+ { "prose": "Java, Spring برای این پروژه مناسب‌اند.", "expect": "rtl", "category": "comma-english", "source": "synthetic", "note": "leading Latin list, Persian sentence" },
+ { "prose": "بین Java, Spring و Maven انتخاب کن.", "expect": "rtl", "category": "comma-english", "source": "synthetic", "note": "comma list + Persian و + third Latin" },
+ { "prose": "Java, Spring, Maven برای این پروژه", "expect": "rtl", "category": "comma-english", "source": "synthetic", "note": "three comma-joined Latin then Persian" },
+ { "prose": "Spring, Boot با هم", "expect": "rtl", "category": "comma-english", "source": "synthetic", "note": "two Latin comma with Persian tail" },
+ { "prose": "پروژه با foo, bar شروع شد", "expect": "rtl", "category": "comma-english", "source": "synthetic", "note": "generic identifiers comma-joined" },
+
+ { "prose": "مقادیر key: value را بخوان.", "expect": "rtl", "category": "colon-pair", "source": "synthetic", "note": "colon-separated identifier pair" },
+ { "prose": "key: value و type: string", "expect": "rtl", "category": "colon-pair", "source": "synthetic", "note": "two colon pairs joined by Persian و" },
+ { "prose": "name: علی age: ۳۰", "expect": "rtl", "category": "colon-pair", "source": "synthetic", "note": "Latin key, Persian value" },
+
+ { "prose": "دستور را با a; b; c جدا کن", "expect": "rtl", "category": "semicolon", "source": "synthetic", "note": "semicolon separator" },
+ { "prose": "for i=1; i<10; i++", "expect": null, "category": "semicolon", "source": "synthetic", "note": "C-for header, no Persian" },
+
+ { "prose": "معماری client/server داریم", "expect": "rtl", "category": "slash-pair", "source": "synthetic", "note": "slash-separated words" },
+ { "prose": "read/write mode را انتخاب کن", "expect": "rtl", "category": "slash-pair", "source": "synthetic", "note": "slash pair inside Persian" },
+ { "prose": "input/output/error سه استریم", "expect": "rtl", "category": "slash-pair", "source": "synthetic", "note": "triple slash" },
+
+ { "prose": "build-test چیست", "expect": "rtl", "category": "dash-pair", "source": "synthetic", "note": "hyphenated identifier" },
+ { "prose": "pre-commit hook را فعال کن", "expect": "rtl", "category": "dash-pair", "source": "synthetic", "note": "kebab word inside Persian" },
+ { "prose": "long-running task ادامه دارد", "expect": "rtl", "category": "dash-pair", "source": "synthetic", "note": "compound adjective" },
+
+ { "prose": "(Java, Spring) و (Maven, Gradle)", "expect": "rtl", "category": "parentheses", "source": "synthetic", "note": "parenthesized lists" },
+ { "prose": "توضیح (به فارسی) در ادامه", "expect": "rtl", "category": "parentheses", "source": "synthetic", "note": "paren around Persian" },
+ { "prose": "note (see README) for details", "expect": null, "category": "parentheses", "source": "synthetic", "note": "English paren" },
+
+ { "prose": "آرایه arr[i] را برگردان", "expect": "rtl", "category": "brackets", "source": "synthetic", "note": "square brackets index" },
+ { "prose": "matrix[0][0] و matrix[1][1]", "expect": "rtl", "category": "brackets", "source": "synthetic", "note": "2D array access" },
+
+ { "prose": "نوع List<String>, Map<String, Integer> بررسی", "expect": "rtl", "category": "angle-brackets", "source": "synthetic", "note": "Java generics — must not lose the closing >" },
+ { "prose": "متد Map<String, List<Integer>> را بردار", "expect": "rtl", "category": "angle-brackets", "source": "synthetic", "note": "nested generics" },
+ { "prose": "if x > 10 then y < 20", "expect": null, "category": "angle-brackets", "source": "synthetic", "note": "comparison operators" },
+
+ { "prose": "شرط active != null باشد", "expect": "rtl", "category": "operators", "source": "synthetic", "note": "not-equal in Persian" },
+ { "prose": "if x == 1 && y == 2", "expect": null, "category": "operators", "source": "synthetic", "note": "equality operators" },
+ { "prose": "x + y = ۱۰", "expect": "rtl", "category": "operators", "source": "synthetic", "note": "arithmetic with Persian digits" },
+
+ { "prose": "مسیر چپ ← راست را ببین", "expect": "rtl", "category": "arrows", "source": "synthetic", "note": "left arrow inside Persian" },
+ { "prose": "Book → آموزش → Project", "expect": "rtl", "category": "arrows", "source": "synthetic", "note": "arrow pipeline mixed" },
+ { "prose": "step1 -> step2 -> step3", "expect": null, "category": "arrows", "source": "synthetic", "note": "ASCII arrows" },
+
+ { "prose": "نسخه v1.2.3, v2.0.0 منتشر شد", "expect": "rtl", "category": "version", "source": "synthetic", "note": "version list" },
+ { "prose": "1.2.3 و 2.0.0 و 3.1.4", "expect": "rtl", "category": "version", "source": "synthetic", "note": "bare versions" },
+ { "prose": "Java 17 و Java 21", "expect": "rtl", "category": "version", "source": "synthetic", "note": "version tail" },
+
+ { "prose": "پورت 127.0.0.1:8080 را بررسی کن", "expect": "rtl", "category": "ip-port", "source": "synthetic", "note": "IPv4 + port inside Persian — regex previously missed" },
+ { "prose": "سرور 192.168.1.1 در دسترس نیست", "expect": "rtl", "category": "ip-port", "source": "synthetic", "note": "IP inside Persian" },
+ { "prose": "بین 8080 و 8443 کدام باز است؟", "expect": "rtl", "category": "ip-port", "source": "synthetic", "note": "port range" },
+
+ { "prose": "ایمیل user@example.com و admin@example.com", "expect": "rtl", "category": "email", "source": "synthetic", "note": "two emails joined by و — @ was splitting the run" },
+ { "prose": "به support@example.com بفرست", "expect": "rtl", "category": "email", "source": "synthetic", "note": "single email in Persian" },
+ { "prose": "user@example.com, admin@example.com", "expect": null, "category": "email", "source": "synthetic", "note": "bare emails" },
+
+ { "prose": "سایت https://example.com/fa را باز کن", "expect": "rtl", "category": "url", "source": "synthetic", "note": "URL inside Persian" },
+ { "prose": "https://example.com و https://docs.example.com", "expect": "rtl", "category": "url", "source": "synthetic", "note": "two URLs joined by و" },
+ { "prose": "See https://example.com for details.", "expect": null, "category": "url", "source": "synthetic", "note": "English with URL" },
+
+ { "prose": "مسیر C:\\Users\\amin\\Desktop را ببین", "expect": "rtl", "category": "windows-path", "source": "synthetic", "note": "Windows path — backslash previously split the run" },
+ { "prose": "C:\\Temp و D:\\Project دو مسیر", "expect": "rtl", "category": "windows-path", "source": "synthetic", "note": "two Windows paths joined by Persian و" },
+ { "prose": "C:\\Program Files\\App", "expect": null, "category": "windows-path", "source": "synthetic", "note": "bare Windows path" },
+
+ { "prose": "مسیر /api/users را بگیر", "expect": "rtl", "category": "unix-path", "source": "synthetic", "note": "Unix path — leading / previously dropped" },
+ { "prose": "/api/users و /api/admin دو endpoint", "expect": "rtl", "category": "unix-path", "source": "synthetic", "note": "two Unix paths joined" },
+ { "prose": "/var/log/app.log فایل لاگ", "expect": "rtl", "category": "unix-path", "source": "synthetic", "note": "Unix path in Persian" },
+ { "prose": "/usr/bin, /usr/local/bin دو مسیر", "expect": "rtl", "category": "unix-path", "source": "synthetic", "note": "comma-joined Unix paths" },
+
+ { "prose": "فلگ‌های --force, --verbose بزن", "expect": "rtl", "category": "cli-flag", "source": "synthetic", "note": "double-dash flags — leading -- previously dropped" },
+ { "prose": "--dry-run و --quiet را استفاده کن", "expect": "rtl", "category": "cli-flag", "source": "synthetic", "note": "two long flags joined by و" },
+ { "prose": "-f و -v را با هم بزن", "expect": "rtl", "category": "cli-flag", "source": "synthetic", "note": "short flags" },
+ { "prose": "npm install --save-dev react", "expect": null, "category": "cli-flag", "source": "synthetic", "note": "bare CLI" },
+
+ { "prose": "متد getUserById و saveUser را صدا بزن", "expect": "rtl", "category": "method-name", "source": "synthetic", "note": "camelCase method names" },
+ { "prose": "user.getName().trim() را برگردان", "expect": "rtl", "category": "method-name", "source": "synthetic", "note": "chained call" },
+ { "prose": "public void setName(String name)", "expect": null, "category": "method-name", "source": "synthetic", "note": "Java signature" },
+
+ { "prose": "نوع Map<K, V> و List<T> را استفاده کن", "expect": "rtl", "category": "generic-type", "source": "synthetic", "note": "generic types inside Persian" },
+ { "prose": "Optional<User> و Optional<Order>", "expect": "rtl", "category": "generic-type", "source": "synthetic", "note": "two Optional generics" },
+ { "prose": "Comparable<? extends T> کاربرد دارد", "expect": "rtl", "category": "generic-type", "source": "synthetic", "note": "bounded wildcard" },
+
+ { "prose": "متد با @Override و @Deprecated علامت‌گذاری شده", "expect": "rtl", "category": "annotation", "source": "synthetic", "note": "Java annotations" },
+ { "prose": "@Test و @BeforeEach را اضافه کن", "expect": "rtl", "category": "annotation", "source": "synthetic", "note": "JUnit annotations" },
+ { "prose": "استفاده از @Autowired ساده است", "expect": "rtl", "category": "annotation", "source": "synthetic", "note": "single annotation" },
+
+ { "prose": "کوئری SELECT * FROM users را اجرا کن", "expect": "rtl", "category": "sql", "source": "synthetic", "note": "SQL SELECT in Persian" },
+ { "prose": "WHERE id = 1 AND status = 'active'", "expect": null, "category": "sql", "source": "synthetic", "note": "SQL WHERE" },
+ { "prose": "SELECT, INSERT, UPDATE, DELETE چهار عمل CRUD", "expect": "rtl", "category": "sql", "source": "synthetic", "note": "CRUD list in Persian" },
+
+ { "prose": "خروجی {\"ok\": true, \"n\": 42} خواهد بود", "expect": "rtl", "category": "json", "source": "synthetic", "note": "JSON literal in Persian" },
+ { "prose": "{\"name\": \"amin\", \"age\": 30}", "expect": null, "category": "json", "source": "synthetic", "note": "bare JSON" },
+
+ { "prose": "پروتکل HTTP, HTTPS انتخاب کن", "expect": "rtl", "category": "acronym-list", "source": "synthetic", "note": "acronym comma-list in Persian" },
+ { "prose": "GET, POST, PUT, DELETE چهار متد", "expect": "rtl", "category": "acronym-list", "source": "synthetic", "note": "HTTP methods list" },
+ { "prose": "TCP و UDP دو پروتکل", "expect": "rtl", "category": "acronym-list", "source": "synthetic", "note": "TCP/UDP" },
+ { "prose": "REST و GraphQL دو رویکرد", "expect": "rtl", "category": "acronym-list", "source": "synthetic", "note": "REST/GraphQL" },
+
+ { "prose": "نوع String, Integer را استفاده کن", "expect": "rtl", "category": "type-list", "source": "synthetic", "note": "Java types in Persian" },
+ { "prose": "boolean, int, long, double اولیه‌ها", "expect": "rtl", "category": "type-list", "source": "synthetic", "note": "primitive list in Persian" },
+
+ { "prose": "کلاس Map<String, Integer> بردار", "expect": "rtl", "category": "generic-complex", "source": "synthetic", "note": "generic with two params" },
+ { "prose": "List<Map<String, List<Integer>>>", "expect": null, "category": "generic-complex", "source": "synthetic", "note": "deep nesting" },
+ { "prose": "متد Set<? extends Number> کاربرد", "expect": "rtl", "category": "generic-complex", "source": "synthetic", "note": "bounded wildcard" },
+
+ { "prose": "# عنوان با Java, Spring", "expect": "rtl", "category": "heading-comma", "source": "synthetic", "note": "markdown heading with Latin list" },
+ { "prose": "## Runtime, Compile Time", "expect": null, "category": "heading-comma", "source": "synthetic", "note": "English heading with comma list" },
+ { "prose": "### مقایسه‌ی Java و Kotlin", "expect": "rtl", "category": "heading-comma", "source": "synthetic", "note": "comparison heading" },
+
+ { "prose": "- Java, Spring", "expect": null, "category": "list-comma", "source": "synthetic", "note": "bullet with Latin-only list — engine leaves it alone" },
+ { "prose": "- کاربر user@example.com", "expect": "rtl", "category": "list-comma", "source": "synthetic", "note": "bullet with email" },
+ { "prose": "- سرور 127.0.0.1:8080", "expect": "rtl", "category": "list-comma", "source": "synthetic", "note": "bullet with IP:port" },
+ { "prose": "1. مرحله اول با --verbose", "expect": "rtl", "category": "list-comma", "source": "synthetic", "note": "numbered with flag" },
+
+ { "prose": "> «Java, Spring» بهترین ترکیب.", "expect": "rtl", "category": "blockquote-list", "source": "synthetic", "note": "blockquote with quoted Latin list" },
+ { "prose": "> Use Java, Spring for backend.", "expect": null, "category": "blockquote-list", "source": "synthetic", "note": "English blockquote" },
+
+ { "prose": "| API | URL |\n|---|---|\n| کاربر | /api/users |", "expect": "rtl", "category": "table-cell", "source": "synthetic", "note": "table with path cell" },
+ { "prose": "/api/users", "expect": null, "category": "table-cell", "source": "synthetic", "note": "single path cell" },
+ { "prose": "user@example.com", "expect": null, "category": "table-cell", "source": "synthetic", "note": "single email cell" },
+ { "prose": "127.0.0.1:8080", "expect": null, "category": "table-cell", "source": "synthetic", "note": "single IP:port cell" },
+ { "prose": "List<String>", "expect": null, "category": "table-cell", "source": "synthetic", "note": "single generic cell" },
+ { "prose": "--force, --verbose", "expect": null, "category": "table-cell", "source": "synthetic", "note": "flag list cell" },
+
+ { "prose": "«Java, Spring»", "expect": null, "category": "quoted-latin", "source": "synthetic", "note": "guillemets around Latin list" },
+ { "prose": "\"Spring Boot\"", "expect": null, "category": "quoted-latin", "source": "synthetic", "note": "double-quoted Latin" },
+ { "prose": "'Java'", "expect": null, "category": "quoted-latin", "source": "synthetic", "note": "single-quoted Latin" },
+
+ { "prose": "کتاب «کتاب» ترجمه شد", "expect": "rtl", "category": "quoted-persian", "source": "synthetic", "note": "guillemet-quoted Persian" },
+ { "prose": "«کتاب»", "expect": "rtl", "category": "quoted-persian", "source": "synthetic", "note": "just Persian in guillemets" },
+ { "prose": "(کتاب)", "expect": "rtl", "category": "quoted-persian", "source": "synthetic", "note": "parenthesized Persian" },
+
+ { "prose": "«Java» به فارسی زبان جاوا", "expect": "rtl", "category": "quoted-mixed", "source": "synthetic", "note": "guillemet Latin then Persian" },
+ { "prose": "دستور «git commit -m message» را وارد کن", "expect": "rtl", "category": "quoted-mixed", "source": "synthetic", "note": "quoted CLI in Persian" },
+
+ { "prose": "پاسخ: بله!", "expect": "rtl", "category": "punctuation-boundary", "source": "synthetic", "note": "Persian answer with punctuation" },
+ { "prose": "Answer: نه", "expect": "rtl", "category": "punctuation-boundary", "source": "synthetic", "note": "English label, Persian answer" },
+ { "prose": "پرسش؟ پاسخ.", "expect": "rtl", "category": "punctuation-boundary", "source": "synthetic", "note": "Persian question mark" },
+
+ { "prose": "ایمیل: user@example.com", "expect": "rtl", "category": "colon-label", "source": "synthetic", "note": "label + email" },
+ { "prose": "پورت: 8080", "expect": "rtl", "category": "colon-label", "source": "synthetic", "note": "label + port" },
+ { "prose": "مسیر: /api/users", "expect": "rtl", "category": "colon-label", "source": "synthetic", "note": "label + path" },
+ { "prose": "نسخه: v1.2.3", "expect": "rtl", "category": "colon-label", "source": "synthetic", "note": "label + version" },
+
+ { "prose": "این هم dry-run mode و هم force mode را می‌پذیرد", "expect": "rtl", "category": "compound-word", "source": "synthetic", "note": "kebab compound in Persian" },
+ { "prose": "پرچم read-only را فعال کن", "expect": "rtl", "category": "compound-word", "source": "synthetic", "note": "read-only in Persian" },
+
+ { "prose": "زبان JavaScript و TypeScript", "expect": "rtl", "category": "camelcase", "source": "synthetic", "note": "camelCase joined by Persian و" },
+ { "prose": "کلاس MyClass, YourClass, TheirClass", "expect": "rtl", "category": "camelcase", "source": "synthetic", "note": "camelCase comma-list" },
+
+ { "prose": "SNAKE_CASE و CONSTANT_NAME دو الگو", "expect": "rtl", "category": "screaming-snake", "source": "synthetic", "note": "SCREAMING_SNAKE in Persian" },
+ { "prose": "MAX_INT, MIN_INT, MAX_LONG سه ثابت", "expect": "rtl", "category": "screaming-snake", "source": "synthetic", "note": "constants comma-list" },
+
+ { "prose": "commit hash a1b2c3d4 است", "expect": "rtl", "category": "hex", "source": "synthetic", "note": "hex hash inside Persian" },
+ { "prose": "#ff0000 و #00ff00 دو رنگ", "expect": "rtl", "category": "hex", "source": "synthetic", "note": "hex colors" },
+
+ { "prose": "پرچم -v را بزن", "expect": "rtl", "category": "short-flag", "source": "synthetic", "note": "short flag in Persian" },
+ { "prose": "-h, -v, -q سه پرچم", "expect": "rtl", "category": "short-flag", "source": "synthetic", "note": "short flags comma-list" },
+
+ { "prose": "docker exec -it container bash", "expect": null, "category": "cli-cmd", "source": "synthetic", "note": "bare docker" },
+ { "prose": "دستور docker exec -it container bash را بزن", "expect": "rtl", "category": "cli-cmd", "source": "synthetic", "note": "docker in Persian" },
+
+ { "prose": "regex /^abc$/ را تست کن", "expect": "rtl", "category": "regex", "source": "synthetic", "note": "regex literal in Persian" },
+ { "prose": "/^[a-z]+$/i و /\\d+/g", "expect": "rtl", "category": "regex", "source": "synthetic", "note": "two regexes joined" },
+
+ { "prose": "کلاس PascalCase, kebab-case, snake_case سه سبک", "expect": "rtl", "category": "naming-styles", "source": "synthetic", "note": "three naming styles in Persian" },
+
+ { "prose": "متد User#getName صدا زده می‌شود", "expect": "rtl", "category": "hash-ref", "source": "synthetic", "note": "Java doc-style ref" },
+ { "prose": "کامیت #123, #456 را ببین", "expect": "rtl", "category": "hash-ref", "source": "synthetic", "note": "issue refs in Persian" },
+
+ { "prose": "Gen2<?> → کلاس Gen2 را بررسی کن", "expect": "rtl", "category": "generic-wildcard", "source": "synthetic", "note": "wildcard generic followed by arrow into Persian" },
+ { "prose": "Gen2<Integer> → کلاس و Type Argument دقیق را بررسی کن", "expect": "rtl", "category": "generic-wildcard", "source": "synthetic", "note": "concrete type argument, arrow to Persian" },
+ { "prose": "Class<? extends Number> را بررسی کن", "expect": "rtl", "category": "generic-bounded", "source": "synthetic", "note": "upper-bounded wildcard in Persian" },
+ { "prose": "Class<? super Integer> را بررسی کن", "expect": "rtl", "category": "generic-bounded", "source": "synthetic", "note": "lower-bounded wildcard in Persian" },
+ { "prose": "List<? extends Number>, Set<Integer> را ببین", "expect": "rtl", "category": "generic-bounded", "source": "synthetic", "note": "two generics comma-joined in Persian" },
+ { "prose": "شناسه $scope, $rootScope چیست", "expect": "rtl", "category": "identifier-prefix", "source": "synthetic", "note": "JavaScript $-lead identifier — regex previously dropped leading $" },
+ { "prose": "متد _init(), _cleanup() صدا زده می‌شود", "expect": "rtl", "category": "identifier-prefix", "source": "synthetic", "note": "underscore-lead identifiers — regex previously dropped leading _" },
+ { "prose": "کلاس List<Map<String, Integer>> استفاده کن", "expect": "rtl", "category": "generic-nested", "source": "synthetic", "note": "nested generics stay one bdi" },
+ { "prose": "متد Foo::bar را صدا بزن", "expect": "rtl", "category": "generic-method-ref", "source": "synthetic", "note": "Java 8 method reference (::)" }
+]

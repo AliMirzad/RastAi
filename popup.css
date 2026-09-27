@@ -1,0 +1,266 @@
+/* RastAI popup — extracted from popup.html in v1.40 refactor.
+   Keeps the dark + green identity, but rebuilds the layout as a
+   short single-column with no scroll at any state. */
+
+@font-face { font-family:'Vazirmatn'; font-weight:400; font-display:block;
+  src:url("fonts/Vazirmatn-Regular.woff2") format("woff2"); }
+@font-face { font-family:'Vazirmatn'; font-weight:500; font-display:block;
+  src:url("fonts/Vazirmatn-Medium.woff2") format("woff2"); }
+@font-face { font-family:'Vazirmatn'; font-weight:700; font-display:block;
+  src:url("fonts/Vazirmatn-Bold.woff2") format("woff2"); }
+
+:root {
+  --bg:#0f1115;
+  --card:#171a20;
+  --card-on:#16251f;
+  --line:rgba(255,255,255,.07);
+  --line-hi:rgba(255,255,255,.14);
+  --text:#e7e9ee;
+  --faint:#646b78;
+  --dim:#8b919e;
+  --accent:#10b981;
+  --accent-soft:rgba(16,185,129,.14);
+  --accent-line:rgba(16,185,129,.32);
+}
+* { box-sizing:border-box; }
+html, body { margin:0; padding:0; }
+body {
+  width:316px;
+  background:var(--bg); color:var(--text);
+  font-family:'Vazirmatn', Tahoma, sans-serif;
+  -webkit-font-smoothing:antialiased;
+}
+
+/* ---------- header ---------- */
+.head {
+  display:flex; align-items:center; gap:8px;
+  padding:8px 14px 6px;
+}
+.logo {
+  width:24px; height:24px; border-radius:7px; flex-shrink:0;
+  background:linear-gradient(145deg,#18d194,#059669);
+  display:grid; place-items:center;
+}
+.logo svg { width:14px; height:14px; display:block; }
+.nm { font:700 12.5px/1 'Vazirmatn'; }
+.ver {
+  margin-inline-start:auto;
+  font:500 10px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  color:var(--faint); direction:ltr; text-decoration:none;
+}
+.ver:hover { color:var(--accent); }
+
+/* ---------- section labels (small, all-caps-ish) ---------- */
+.sect {
+  font:500 10px/1 'Vazirmatn';
+  color:var(--faint);
+  padding:7px 15px 4px;
+  letter-spacing:.2px;
+}
+
+/* ---------- reusable card ---------- */
+.card {
+  margin:0 12px;
+  border:1px solid var(--line);
+  border-radius:11px;
+  background:var(--card);
+}
+.card + .card { margin-top:0; }
+.row {
+  display:flex; align-items:center; gap:10px;
+  padding:7px 12px;
+  min-height:32px;
+}
+.row + .row { border-top:1px solid var(--line); }
+.row .txt { flex:1; min-width:0; }
+.t1 { display:block; font:500 12px/1.3 'Vazirmatn'; }
+.t2 { display:block; font:400 10px/1.45 'Vazirmatn'; color:var(--faint); margin-top:2px; }
+
+/* ---------- site row ---------- */
+.site-dot {
+  width:7px; height:7px; border-radius:50%; flex-shrink:0;
+  background:var(--accent); box-shadow:0 0 0 3px var(--accent-soft);
+}
+.site-host {
+  display:block; font:600 12px/1.3 'Vazirmatn';
+  direction:ltr; text-align:end;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
+.site-note { display:block; font:400 10px/1.4 'Vazirmatn'; color:var(--faint); margin-top:2px; }
+.site.off .site-dot { background:#4d545f; box-shadow:none; }
+.site.partial .site-dot { background:#e0a020; box-shadow:0 0 0 3px rgba(224,160,32,.14); }
+.site.unsupported { opacity:.55; }
+.site.unsupported .sw { pointer-events:none; }
+.site.unsupported .site-dot { background:#3a414d; box-shadow:none; }
+
+/* ---------- switch ---------- */
+.sw { position:relative; width:34px; height:20px; flex-shrink:0; }
+.sw input { position:absolute; opacity:0; width:0; height:0; }
+.tr {
+  position:absolute; inset:0; background:#232830;
+  border:1px solid var(--line-hi); border-radius:99px; cursor:pointer;
+  transition:background .18s, border-color .18s;
+}
+.tr::before {
+  content:""; position:absolute; width:14px; height:14px;
+  top:2px; inset-inline-start:2px;
+  background:#9aa1ad; border-radius:50%;
+  transition:inset-inline-start .18s cubic-bezier(.4,0,.2,1), background .18s;
+}
+input:checked + .tr { background:var(--accent); border-color:transparent; }
+input:checked + .tr::before { inset-inline-start:17px; background:#fff; }
+input:focus-visible + .tr { outline:2px solid var(--accent); outline-offset:2px; }
+
+/* ---------- segmented control (used for RTL mode, lh, presets) ---------- */
+.seg {
+  display:flex; flex-shrink:0;
+  height:22px;
+  background:#232830; border:1px solid var(--line-hi); border-radius:99px;
+  padding:1px; gap:1px;
+}
+.seg button {
+  padding:0 9px; height:18px; border:0; background:none; border-radius:99px;
+  color:var(--text); font:500 10px/1 'Vazirmatn'; cursor:pointer;
+  transition:background .16s, color .16s;
+}
+.seg button:hover { background:var(--line-hi); }
+.seg button[aria-checked="true"] { background:var(--accent); color:#04241a; }
+.seg button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+
+/* ---------- RTL mode cards ---------- */
+.opts { display:grid; gap:4px; padding:0 12px; }
+.opt {
+  position:relative; display:flex; align-items:center; gap:10px;
+  padding:6px 10px;
+  border:1px solid var(--line); border-radius:10px; background:var(--card);
+  cursor:pointer; transition:background .16s, border-color .16s;
+}
+.opt:hover { border-color:var(--line-hi); }
+.opt input { position:absolute; inset:0; opacity:0; margin:0; cursor:pointer; }
+
+.dot {
+  width:15px; height:15px; border-radius:50%; flex-shrink:0;
+  border:1.5px solid #454b57; display:grid; place-items:center;
+  transition:border-color .16s;
+}
+.dot::after {
+  content:""; width:7px; height:7px; border-radius:50%;
+  background:var(--accent); transform:scale(0);
+  transition:transform .16s cubic-bezier(.4,0,.2,1);
+}
+.opt:has(input:checked) { background:var(--card-on); border-color:rgba(16,185,129,.42); }
+.opt:has(input:checked) .dot { border-color:var(--accent); }
+.opt:has(input:checked) .dot::after { transform:scale(1); }
+.opt:has(input:focus-visible) { outline:2px solid var(--accent); outline-offset:2px; }
+
+.opt .txt { flex:1; min-width:0; display:block; }
+
+/* The specimen is the explanation: the bars sit where the text would.
+   "همیشه" is all right-aligned, "پیش‌فرض" all left, and "هوشمند" mixed —
+   which is exactly what the mode does, line by line. */
+.spec { width:38px; display:grid; gap:3.5px; flex-shrink:0; }
+.spec i { display:block; height:3px; border-radius:2px; background:#3a414d;
+          transition:background .16s; }
+.spec i:nth-child(1) { width:100%; }
+.spec i:nth-child(2) { width:70%; }
+.spec i:nth-child(3) { width:46%; }
+.spec.r i { justify-self:start; }
+.spec.l i { justify-self:end; }
+.spec.mix i:nth-child(1) { justify-self:start; }
+.spec.mix i:nth-child(2) { justify-self:end; }
+.spec.mix i:nth-child(3) { justify-self:start; }
+.opt:has(input:checked) .spec i { background:var(--accent); opacity:.85; }
+
+/* ---------- stepper ---------- */
+.step {
+  display:flex; align-items:center; flex-shrink:0;
+  direction:ltr; height:22px; padding:0 2px;
+  background:#232830; border:1px solid var(--line-hi); border-radius:99px;
+}
+.step button {
+  width:18px; height:18px; padding:0; border:0; border-radius:50%;
+  background:none; color:var(--text); cursor:pointer;
+  display:grid; place-items:center; transition:background .16s, color .16s;
+}
+.step button svg { width:10px; height:10px; display:block; }
+.step button:hover { background:var(--line-hi); }
+.step button[aria-disabled="true"] { color:var(--faint); background:none; cursor:default; }
+.step output {
+  min-width:34px; text-align:center;
+  font:500 10.5px/1 'Vazirmatn'; font-variant-numeric:tabular-nums;
+}
+.step.changed output { color:var(--accent); }
+
+/* ---------- manual-direction callout ---------- */
+.callout {
+  display:flex; gap:9px; align-items:flex-start;
+  margin:6px 12px 0; padding:7px 10px;
+  background:var(--accent-soft);
+  border:1px solid rgba(16,185,129,.22);
+  border-radius:10px;
+}
+.callout .btn {
+  width:22px; height:22px; flex-shrink:0; margin-top:1px;
+  border-radius:6px; background:var(--accent);
+  border:1px solid rgba(255,255,255,.22);
+  box-shadow:0 2px 5px rgba(0,0,0,.22), 0 0 0 3px rgba(16,185,129,.14);
+  display:grid; place-items:center;
+}
+.callout .btn svg { width:12px; height:12px; display:block; }
+.callout .body { flex:1; min-width:0; }
+.c1 { display:block; font:700 11px/1.35 'Vazirmatn'; color:#dfe3ea; }
+.c2 { display:block; font:400 10px/1.5 'Vazirmatn'; color:var(--dim); margin-top:2px; }
+.c3 { color:var(--faint); }
+.kbd {
+  display:flex; align-items:center; gap:4px;
+  margin-top:4px; font:400 10px/1.3 'Vazirmatn'; color:var(--faint);
+}
+.kbd b {
+  display:inline-block; padding:1px 5px;
+  font:600 10px/1 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  background:rgba(255,255,255,.05); border:1px solid var(--line-hi);
+  border-radius:5px; color:var(--text); direction:ltr;
+}
+.reset {
+  display:flex; align-items:center; gap:8px; margin-top:6px;
+  font:400 10px/1 'Vazirmatn'; color:var(--faint);
+}
+.reset[hidden] { display:none; }
+.reset button {
+  margin-inline-start:auto; padding:3px 8px;
+  font:500 10px/1 'Vazirmatn'; color:var(--accent);
+  background:none; border:1px solid var(--accent-line); border-radius:6px;
+  cursor:pointer; transition:background .16s, border-color .16s;
+}
+.reset button:hover { background:rgba(16,185,129,.1); border-color:rgba(16,185,129,.5); }
+.reset.done button { display:none; }
+.reset.done .reset-text { color:var(--accent); }
+.reset-text:focus { outline:none; }
+
+/* ---------- footer ---------- */
+.foot {
+  display:flex; align-items:center; justify-content:space-between;
+  font:400 9.5px/1 'Vazirmatn'; color:#4d545f;
+  padding:7px 14px 9px;
+}
+.credit { direction:ltr; letter-spacing:.2px; }
+.dbg {
+  display:flex; align-items:center; gap:5px;
+  font:400 9.5px/1 'Vazirmatn'; color:#4d545f;
+  background:none; border:0; padding:0; cursor:pointer;
+}
+.dbg:hover { color:var(--dim); }
+.dbg .led {
+  width:6px; height:6px; border-radius:50%;
+  background:#3a414d; transition:background .16s, box-shadow .16s;
+}
+.dbg[aria-pressed="true"] { color:var(--accent); }
+.dbg[aria-pressed="true"] .led {
+  background:var(--accent); box-shadow:0 0 0 2px rgba(16,185,129,.2);
+}
+
+/* ---------- focus rings on the small buttons ---------- */
+.step button:focus-visible, .reset button:focus-visible,
+.dbg:focus-visible, .ver:focus-visible {
+  outline:2px solid var(--accent); outline-offset:2px; border-radius:6px;
+}

@@ -1,0 +1,125 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RastAI — popup layout & no-scroll</title>
+  <style>
+    body { font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 1100px; }
+    h1 { font-size: 18px; }
+    .suite { margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; }
+    .suite h2 { font-size: 13px; margin: 0 0 6px; }
+    .row { padding: 2px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+    .ok { color: #0a7f2e; }
+    .fail { color: #b00020; font-weight: 600; }
+    #summary { padding: 8px 14px; border-radius: 6px; margin: 12px 0; font-size: 14px; }
+    #summary.pass { background: #e7f5ec; color: #0a7f2e; }
+    #summary.fail { background: #fdeceb; color: #b00020; }
+    /* Popup gets an iframe. It stays offscreen — measurements come from
+       inside the iframe's own document. */
+    /* Iframe uses the popup's own body width so measurements match
+       what the browser will show in the real popup. Height is a
+       comfortable ceiling — we're checking the popup fits inside it
+       without scrolling. */
+    #frame-wrap { position: fixed; left: -9999px; top: 0; width: 316px; height: 700px; overflow: visible; }
+    iframe { width: 316px; height: 700px; border: 0; display: block; }
+  </style>
+</head>
+<body>
+  <h1>RastAI — popup layout &amp; no-scroll pins</h1>
+  <div id="summary">running…</div>
+  <div id="results"></div>
+  <div id="frame-wrap"><iframe id="frame" src="ui/popup-layout-frame.html?case=default"></iframe></div>
+
+  <script>
+    const results = document.getElementById("results");
+    const summary = document.getElementById("summary");
+    let passed = 0, failed = 0, assertions = 0, cases = 0, casesDone = 0;
+    const failLog = [];
+
+    function newSuite(name) {
+      const div = document.createElement("div");
+      div.className = "suite";
+      div.innerHTML = "<h2>" + name + "</h2>";
+      results.appendChild(div);
+      return div;
+    }
+
+    function record(div, label, ok, detail) {
+      assertions++;
+      if (ok) passed++; else { failed++; failLog.push(label + "  " + (detail || "")); }
+      const row = document.createElement("div");
+      row.className = "row " + (ok ? "ok" : "fail");
+      row.textContent = (ok ? "✓ " : "✗ ") + label + (!ok && detail ? "   " + detail : "");
+      div.appendChild(row);
+    }
+
+    // Each case reloads the iframe with a different pre-set state, then
+    // measures the resulting popup body's own scroll dimensions.
+    const cases_list = [
+      { name: "default state",       q: "default" },
+      { name: "site disabled",       q: "site-off" },
+      { name: "unsupported site",    q: "unsupported" },
+      { name: "partial site",        q: "partial" },
+      { name: "font scale 130%",     q: "scale-130" },
+      { name: "comfortable preset",  q: "comfortable" },
+      { name: "override count > 0",  q: "with-overrides" },
+      { name: "debug enabled",       q: "debug" }
+    ];
+
+    function runOne(c, div, done) {
+      const frame = document.getElementById("frame");
+      frame.onload = () => {
+        try {
+          const w = frame.contentWindow;
+          const d = w.document;
+          const html = d.documentElement;
+          const body = d.body;
+          // Popup renders happen async (storage.get callback). Wait a beat.
+          setTimeout(() => {
+            // Body dimensions are the popup's own footprint. In a real
+            // Chrome popup the browser sizes the popup window to the
+            // body — so scrollHeight <= a target ceiling means "fits
+            // without needing a scrollbar".
+            const rect = body.getBoundingClientRect();
+            const bodyH = Math.ceil(body.scrollHeight);
+            const bodyW = Math.ceil(body.scrollWidth);
+            record(div, "popup body width in 300-330 range",
+              bodyW >= 300 && bodyW <= 335,
+              "bodyW=" + bodyW);
+            record(div, "no horizontal overflow: body.scrollWidth <= body.clientWidth",
+              body.scrollWidth <= body.clientWidth + 1,
+              "scrollW=" + body.scrollWidth + " clientW=" + body.clientWidth);
+            record(div, "no vertical overflow inside body's own children",
+              body.scrollHeight <= body.clientHeight + 1,
+              "scrollH=" + body.scrollHeight + " clientH=" + body.clientHeight);
+            // Chrome extension popups cap at ~600px; anything taller
+            // gets a scrollbar. 580 gives a safe buffer for font-metric
+            // variance between systems.
+            record(div, "total popup height <= 580px (under Chrome popup cap)",
+              bodyH <= 580,
+              "bodyH=" + bodyH + "px");
+            done();
+          }, 400);
+        } catch (e) {
+          record(div, "iframe measurement", false, e.message);
+          done();
+        }
+      };
+      frame.src = "ui/popup-layout-frame.html?case=" + c.q;
+    }
+
+    async function runAll() {
+      for (const c of cases_list) {
+        const div = newSuite("no-scroll — " + c.name);
+        await new Promise((res) => runOne(c, div, res));
+      }
+      summary.className = failed ? "fail" : "pass";
+      summary.textContent = (failed ? "FAIL — " : "OK — ") + passed + "/" + assertions +
+        " assertions passed" + (failed ? " (" + failed + " failed)" : "");
+      document.title = (failed ? "FAIL " : "OK ") + passed + "/" + assertions;
+      window.__testResults = { passed, failed, assertions, failLog };
+    }
+    runAll();
+  </script>
+</body>
+</html>

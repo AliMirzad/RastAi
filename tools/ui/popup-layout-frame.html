@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>popup layout frame</title>
+<script src="stub.js"></script>
+</head>
+<body>
+<script>
+// Loads the REAL popup.html into an iframe context with a pre-set
+// storage state. Used by tools/popup-layout-tests.html to measure
+// scroll dimensions across visual states.
+(function () {
+  const S = __stub;
+  const q = new URLSearchParams(location.search).get("case") || "default";
+
+  S.manifest = JSON.parse(S.readFile("../../manifest.json"));
+
+  // Base state: chatgpt.com (a supported host), everything default.
+  let sync = { rtlMode: "smart", fontEnabled: false, lineSpacing: "normal",
+               debugMode: false, siteOff: {}, fontScale: 100 };
+  let local = { overrides: {} };
+  let currentTabUrl = "https://chatgpt.com/c/abc";
+
+  switch (q) {
+    case "site-off":
+      sync.siteOff = { "chatgpt.com": true };
+      break;
+    case "unsupported":
+      currentTabUrl = "https://example.com/";
+      break;
+    case "partial":
+      currentTabUrl = "https://gemini.google.com/";
+      break;
+    case "scale-130":
+      sync.fontScale = 130;
+      break;
+    case "comfortable":
+      sync.fontScale = 110;
+      sync.lineSpacing = "comfortable";
+      break;
+    case "with-overrides":
+      const ov = {};
+      for (let i = 0; i < 12; i++) ov["h" + i] = (i % 2) ? "rtl" : "ltr";
+      local = { overrides: ov };
+      break;
+    case "debug":
+      sync.debugMode = true;
+      break;
+  }
+  S.sync = sync;
+  S.local = local;
+  S.url = currentTabUrl;
+
+  const doc = new DOMParser().parseFromString(S.readFile("../../popup.html"), "text/html");
+  for (const st of doc.querySelectorAll("style")) {
+    const s = document.createElement("style");
+    s.textContent = st.textContent.replace(/url\("fonts\//g, 'url("../../fonts/');
+    document.head.appendChild(s);
+  }
+  for (const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
+    const href = link.getAttribute("href");
+    if (!href || /^https?:/.test(href)) continue;
+    try {
+      const css = S.readFile("../../" + href);
+      const s = document.createElement("style");
+      s.textContent = css.replace(/url\("fonts\//g, 'url("../../fonts/');
+      document.head.appendChild(s);
+    } catch (_) {}
+  }
+  for (const n of [...doc.body.childNodes]) {
+    if (n.nodeName !== "SCRIPT") document.body.appendChild(document.importNode(n, true));
+  }
+
+  Promise.resolve()
+    .then(() => S.loadScript("../../match.js"))
+    .then(() => S.loadScript("../../sites.js"))
+    .then(() => S.loadScript("../../popup.js"));
+})();
+</script>
+</body>
+</html>

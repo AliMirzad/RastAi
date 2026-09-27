@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>RastAI</title>
+<link rel="stylesheet" href="popup.css">
+</head>
+<body>
+
+  <div class="head">
+    <div class="logo" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#04291d" stroke-width="2.4"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 7H8"/><path d="m12 3-4 4 4 4"/>
+        <path d="M4 17h12"/><path d="m12 13 4 4-4 4"/>
+      </svg>
+    </div>
+    <div class="nm">RastAI</div>
+    <a class="ver" id="ver" href="#" target="_blank" rel="noopener"></a>
+  </div>
+
+  <div class="card site" id="site-row">
+    <div class="row">
+      <span class="site-dot" aria-hidden="true"></span>
+      <span class="txt">
+        <span class="site-host" id="site-host">—</span>
+        <span class="site-note" id="site-note">در این سایت فعال است</span>
+      </span>
+      <label class="sw">
+        <input type="checkbox" id="toggle-site" checked aria-label="فعال در این سایت">
+        <span class="tr"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="sect">پاسخ‌ها چه‌وقت راست‌چین شوند؟</div>
+  <div class="opts" role="radiogroup" aria-label="پاسخ‌ها چه‌وقت راست‌چین شوند؟">
+    <label class="opt">
+      <input type="radio" name="rtl-mode" value="smart">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="txt">
+        <span class="t1">هوشمند</span>
+        <span class="t2">وقتی زبانِ خودِ پاراگراف فارسی باشد</span>
+      </span>
+      <span class="spec mix" aria-hidden="true"><i></i><i></i><i></i></span>
+    </label>
+
+    <label class="opt">
+      <input type="radio" name="rtl-mode" value="always">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="txt">
+        <span class="t1">همیشه</span>
+        <span class="t2">هر پاراگرافی که یک کلمه فارسی دارد</span>
+      </span>
+      <span class="spec r" aria-hidden="true"><i></i><i></i><i></i></span>
+    </label>
+
+    <label class="opt">
+      <input type="radio" name="rtl-mode" value="auto">
+      <span class="dot" aria-hidden="true"></span>
+      <span class="txt">
+        <span class="t1">هیچ‌وقت</span>
+        <span class="t2">جهت دست‌نخورده؛ فقط فونت و اصلاح bidi</span>
+      </span>
+      <span class="spec l" aria-hidden="true"><i></i><i></i><i></i></span>
+    </label>
+  </div>
+
+  <div class="sect">خوانایی</div>
+  <div class="card">
+    <div class="row preset-row">
+      <span class="txt">
+        <span class="t1" id="preset-label">پیش‌تنظیم</span>
+      </span>
+      <div class="seg" id="preset-seg" role="group" aria-labelledby="preset-label">
+        <button type="button" data-preset="compact"     aria-label="فشرده">فشرده</button>
+        <button type="button" data-preset="normal"      aria-label="عادی">عادی</button>
+        <button type="button" data-preset="comfortable" aria-label="راحت">راحت</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="txt">
+        <span class="t1" id="scale-label">اندازه‌ی متن</span>
+      </span>
+      <div class="step" id="scale" role="group" aria-labelledby="scale-label">
+        <button type="button" id="scale-down" aria-label="کوچک‌تر کردن متن">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true"><path d="M2.5 6h7"/></svg>
+        </button>
+        <output id="scale-val" aria-live="polite">100%</output>
+        <button type="button" id="scale-up" aria-label="بزرگ‌تر کردن متن">
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6"
+               stroke-linecap="round" aria-hidden="true"><path d="M2.5 6h7M6 2.5v7"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="txt">
+        <span class="t1" id="lh-label">فاصله‌ی سطرها</span>
+      </span>
+      <div class="seg" id="lh-seg" role="radiogroup" aria-labelledby="lh-label">
+        <button type="button" data-lh="compact"     role="radio" aria-checked="false" aria-label="فشرده">فشرده</button>
+        <button type="button" data-lh="normal"      role="radio" aria-checked="true"  aria-label="عادی">عادی</button>
+        <button type="button" data-lh="comfortable" role="radio" aria-checked="false" aria-label="راحت">راحت</button>
+      </div>
+    </div>
+    <div class="row">
+      <span class="txt">
+        <span class="t1">فونت Vazirmatn</span>
+      </span>
+      <label class="sw">
+        <input type="checkbox" id="toggle-font" aria-label="فونت Vazirmatn">
+        <span class="tr"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="callout">
+    <span class="btn" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#04291d" stroke-width="2.2"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 7H8"/><path d="m12 3-4 4 4 4"/>
+        <path d="M4 17h12"/><path d="m12 13 4 4-4 4"/>
+      </svg>
+    </span>
+    <span class="body">
+      <span class="c1">اصلاح دستی جهتِ پاراگراف</span>
+      <span class="c2">متن پاراگراف را انتخاب کن و میان‌بر را بزن؛ زدن دوباره،
+      همان پاراگراف را به حالت خودکار برمی‌گرداند
+      <span class="c3">— با رفرش هم می‌ماند.</span></span>
+      <span class="kbd">میان‌بر پیش‌فرض: <b>Alt+Shift+F</b></span>
+      <span class="reset" id="reset" hidden>
+        <span class="reset-text" id="reset-text" aria-live="polite"></span>
+        <button type="button" id="reset-btn" aria-label="پاک‌کردن همه‌ی اصلاح‌های دستی">پاک‌کردن</button>
+      </span>
+    </span>
+  </div>
+
+  <div class="foot">
+    <button class="dbg" id="toggle-debug" type="button" aria-pressed="false">
+      <span class="led" aria-hidden="true"></span>حالت تشخیص
+    </button>
+    <span class="credit">created by Ali Mirzad</span>
+  </div>
+
+  <script src="match.js"></script>
+  <script src="sites.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

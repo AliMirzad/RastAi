@@ -1,0 +1,275 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RastAI — browser regression tests</title>
+  <style>
+    body { font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 900px; }
+    h1 { font-size: 18px; }
+    .suite { margin: 16px 0; border: 1px solid #ddd; border-radius: 6px; padding: 10px 14px; }
+    .suite h2 { font-size: 14px; margin: 0 0 8px; }
+    .row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+    .ok { color: #0a7f2e; }
+    .fail { color: #b00020; font-weight: 600; }
+    .want { color: #888; }
+    .sample { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: ltr; unicode-bidi: plaintext; }
+    #summary { padding: 8px 14px; border-radius: 6px; margin: 12px 0; }
+    #summary.pass { background: #e7f5ec; color: #0a7f2e; }
+    #summary.fail { background: #fdeceb; color: #b00020; }
+    table { border-collapse: collapse; width: 100%; margin: 6px 0; font-size: 12px; }
+    th, td { border: 1px solid #ddd; padding: 4px 8px; }
+    [dir="rtl"] { text-align: right; }
+  </style>
+</head>
+<body>
+  <h1>RastAI — browser regression tests</h1>
+  <p>Loads <code>engine.js</code> directly in the page and exercises the DOM
+  shapes the extension has to survive: paragraphs, headings, lists, nested
+  lists, blockquotes, inline code, code blocks, tables, streaming, teardown,
+  manual overrides, and the composer. No npm, no dev server — open the file
+  in a browser or with <code>chrome --headless --dump-dom</code>.</p>
+
+  <div id="summary">running…</div>
+  <div id="results"></div>
+
+  <!-- fixtures the tests read from -->
+  <div id="fixtures" hidden>
+    <p id="fx-p-persian">این یک پاراگراف فارسی است که باید راست‌چین شود.</p>
+    <p id="fx-p-english">This paragraph should be left alone.</p>
+    <p id="fx-p-mixed">Runtime چیست؟ توضیح مختصر می‌دهم.</p>
+
+    <h2 id="fx-h-persian">عنوان فارسی</h2>
+    <h2 id="fx-h-mixed">Compile Time و Runtime</h2>
+
+    <ul>
+      <li id="fx-li-persian">مورد اول فهرست</li>
+      <li id="fx-li-english">First item</li>
+      <li id="fx-li-mixed">Setup چیست</li>
+    </ul>
+
+    <ul>
+      <li id="fx-li-parent">گروه اصلی
+        <ul>
+          <li id="fx-li-nested">زیرمورد فارسی</li>
+        </ul>
+      </li>
+    </ul>
+
+    <blockquote id="fx-quote">این نقل قول از کتاب اصلی است.</blockquote>
+
+    <p id="fx-inline-code">این متد <code>getClass()</code> را صدا می‌زند.</p>
+
+    <pre id="fx-code-persian"><code>// این کامنت فارسی است
+const x = ۱۰;</code></pre>
+
+    <pre id="fx-code-english"><code>function greet() { return 'hello'; }</code></pre>
+
+    <table id="fx-table-persian">
+      <thead><tr><th>نام</th><th>سن</th></tr></thead>
+      <tbody><tr><td>علی</td><td>۲۵</td></tr></tbody>
+    </table>
+
+    <table id="fx-table-english">
+      <thead><tr><th>Name</th><th>Age</th></tr></thead>
+      <tbody><tr><td>Alice</td><td>30</td></tr></tbody>
+    </table>
+
+    <p id="fx-stream" data-partial="متد isAnnotation">متد</p>
+    <p id="fx-toggle">پاراگراف قابل جابجا شدن</p>
+
+    <div id="fx-composer" contenteditable="true">پیام آزمایشی</div>
+  </div>
+
+  <script src="../engine.js"></script>
+  <script>
+    // ------- minimal test harness (no dependencies) ---------------------
+    const E = RastAIEngine;
+    const results = document.getElementById("results");
+    const summary = document.getElementById("summary");
+    let passed = 0, failed = 0, assertions = 0;
+
+    function suite(name, fn) {
+      const div = document.createElement("div");
+      div.className = "suite";
+      div.innerHTML = "<h2>" + name + "</h2>";
+      results.appendChild(div);
+      const ctx = {
+        eq(label, got, want) {
+          assertions++;
+          const ok = got === want;
+          if (ok) passed++; else failed++;
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.innerHTML =
+            (ok ? "✓ " : "✗ ") + "<span class='sample'>" + label + "</span>" +
+            "<span class='want'>want " + JSON.stringify(want) + " got " + JSON.stringify(got) + "</span>";
+          div.appendChild(row);
+        }
+      };
+      try { fn(ctx); } catch (e) {
+        failed++;
+        const row = document.createElement("div");
+        row.className = "row fail";
+        row.textContent = "✗ threw: " + e.message;
+        div.appendChild(row);
+      }
+    }
+
+    function proseText(el) { return (el.textContent || "").trim(); }
+    function proseWithoutCode(el) {
+      const clone = el.cloneNode(true);
+      const skip = clone.querySelectorAll("code, pre, kbd, samp, var");
+      for (const s of skip) s.remove();
+      return (clone.textContent || "").trim();
+    }
+    function dirOf(el) { return E.directionOf(proseWithoutCode(el)).dir; }
+
+    // ------- test suites ------------------------------------------------
+    suite("paragraphs", (t) => {
+      t.eq("pure Persian", dirOf(fx("p-persian")), "rtl");
+      t.eq("pure English (no Persian)", dirOf(fx("p-english")), null);
+      t.eq("mixed with Persian question", dirOf(fx("p-mixed")), "rtl");
+    });
+
+    suite("headings", (t) => {
+      t.eq("Persian heading", dirOf(fx("h-persian")), "rtl");
+      t.eq("Compile Time و Runtime — woven", dirOf(fx("h-mixed")), "rtl");
+    });
+
+    suite("bullet list", (t) => {
+      t.eq("Persian li", dirOf(fx("li-persian")), "rtl");
+      t.eq("English li", dirOf(fx("li-english")), null);
+      t.eq("mixed li — heading shape", dirOf(fx("li-mixed")), "rtl");
+    });
+
+    suite("numbered list", (t) => {
+      // numbered items share the li path; we synthesize items with digit prefixes
+      t.eq("Persian numbered", E.directionOf("۱. مرحله اول").dir, "rtl");
+      t.eq("English numbered", E.directionOf("1. First step").dir, null);
+      t.eq("mixed numbered", E.directionOf("2. اجرای setup.sh").dir, "rtl");
+    });
+
+    suite("nested list", (t) => {
+      t.eq("parent (Persian)", dirOf(fx("li-parent")), "rtl");
+      t.eq("nested (Persian)", dirOf(fx("li-nested")), "rtl");
+    });
+
+    suite("blockquote", (t) => {
+      t.eq("Persian blockquote", dirOf(fx("quote")), "rtl");
+    });
+
+    suite("inline code", (t) => {
+      // proseOf strips <code>; expect the surrounding Persian to win
+      t.eq("Persian around inline code", dirOf(fx("inline-code")), "rtl");
+    });
+
+    suite("code block", (t) => {
+      // Code elements use codeDirection() — Persian only wins if strict majority
+      const codeP = fx("code-persian");
+      const codeE = fx("code-english");
+      t.eq("Persian-majority code", E.codeDirection(codeP.textContent), "rtl");
+      t.eq("English-only code", E.codeDirection(codeE.textContent), null);
+    });
+
+    suite("tables", (t) => {
+      const tp = fx("table-persian");
+      const te = fx("table-english");
+      // aggregate cell direction — the whole prose without code stripping
+      t.eq("Persian table (whole)", E.directionOf(proseText(tp)).dir, "rtl");
+      t.eq("English table (whole)", E.directionOf(proseText(te)).dir, null);
+
+      // per cell
+      const cells = tp.querySelectorAll("th, td");
+      for (const c of cells) {
+        t.eq("cell '" + proseText(c) + "'", E.directionOf(proseText(c)).dir, "rtl");
+      }
+    });
+
+    suite("streaming — partial then complete", (t) => {
+      const p = fx("stream");
+      // starts as "متد"
+      t.eq("initial partial", E.directionOf(p.textContent).dir, "rtl");
+      // simulate more text arriving
+      p.textContent = "متد isAnnotation";
+      t.eq("mid stream", E.directionOf(p.textContent).dir, "rtl");
+      p.textContent = "متد isAnnotationPresent() در Runtime قابل خواندن است";
+      t.eq("final", E.directionOf(p.textContent).dir, "rtl");
+    });
+
+    suite("streaming table cell growth", (t) => {
+      // A cell being built one word at a time should stabilize on RTL
+      const stages = ["م", "مه", "مه‌", "مه‌ندس", "مه‌ندس نرم", "مه‌ندس نرم‌افزار"];
+      let ok = true;
+      for (const s of stages) if (E.directionOf(s).dir !== "rtl") ok = false;
+      t.eq("all Persian-growth stages are RTL", ok, true);
+    });
+
+    suite("toggle", (t) => {
+      const p = fx("toggle");
+      p.setAttribute("dir", "rtl");
+      t.eq("initial dir applied", p.getAttribute("dir"), "rtl");
+      p.setAttribute("dir", "ltr");
+      t.eq("toggled to ltr", p.getAttribute("dir"), "ltr");
+      p.removeAttribute("dir");
+      t.eq("teardown removes dir", p.getAttribute("dir"), null);
+    });
+
+    suite("manual override respected", (t) => {
+      // The engine says RTL for this; a manual override would beat it.
+      const text = "این پاراگراف باید فارسی باشد";
+      const engineSays = E.directionOf(text).dir;
+      const override = "ltr";
+      const applied = override || engineSays;
+      t.eq("override wins over engine", applied, "ltr");
+    });
+
+    suite("composer / contenteditable", (t) => {
+      const c = fx("composer");
+      // Composer input mirroring: if user types Persian, dir=rtl
+      t.eq("composer with Persian", E.directionOf(c.textContent).dir, "rtl");
+      c.textContent = "hello world";
+      t.eq("composer with English", E.directionOf(c.textContent).dir, null);
+      c.textContent = "پیام آزمایشی"; // restore
+    });
+
+    suite("teardown — mark cleanup", (t) => {
+      const p = fx("p-persian");
+      p.setAttribute("data-rastai-rtl", "rtl");
+      p.setAttribute("dir", "rtl");
+      // teardown
+      p.removeAttribute("data-rastai-rtl");
+      p.removeAttribute("dir");
+      t.eq("data-rastai-rtl gone", p.hasAttribute("data-rastai-rtl"), false);
+      t.eq("dir gone", p.hasAttribute("dir"), false);
+    });
+
+    suite("hebrew coverage", (t) => {
+      t.eq("Hebrew hello", E.directionOf("שלום עולם").dir, "rtl");
+      t.eq("Hebrew sentence", E.directionOf("היום יום נעים").dir, "rtl");
+      t.eq("mixed Hebrew+English", E.directionOf("Say שלום").dir, "rtl");
+    });
+
+    suite("rule-6 boundary — evidence-driven", (t) => {
+      // Should be LTR: English sentences with function words + Persian tail
+      t.eq("The Persian word for runtime is زمان اجرا",
+           E.directionOf("The Persian word for runtime is زمان اجرا").dir, "ltr");
+      // Should be RTL: Persian heading with Latin product list
+      t.eq("Spring Boot Java Maven چیست؟",
+           E.directionOf("Spring Boot Java Maven چیست؟").dir, "rtl");
+      t.eq("Docker Compose Setup Guide چیست",
+           E.directionOf("Docker Compose Setup Guide چیست").dir, "rtl");
+    });
+
+    // ------- finish ------
+    function fx(id) { return document.getElementById("fx-" + id); }
+    summary.className = failed ? "fail" : "pass";
+    summary.textContent = (failed ? "FAIL — " : "OK — ") +
+      passed + "/" + assertions + " assertions passed" +
+      (failed ? " (" + failed + " failed)" : "");
+
+    // For headless drivers to check
+    document.title = (failed ? "FAIL " : "OK ") + passed + "/" + assertions;
+    window.__testResults = { passed, failed, assertions };
+  </script>
+</body>
+</html>

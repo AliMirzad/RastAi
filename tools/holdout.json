@@ -1,0 +1,51 @@
+[
+ { "prose": "امروز صبح خیلی زود بیدار شدم و به پیاده‌روی رفتم.", "expect": "rtl", "category": "everyday", "source": "holdout", "note": "fresh Persian sentence" },
+ { "prose": "کتابخانه مرکزی دانشگاه از ساعت ۸ صبح باز است.", "expect": "rtl", "category": "everyday", "source": "holdout", "note": "library hours" },
+ { "prose": "The migration completed successfully on all shards.", "expect": null, "category": "english-pure", "source": "holdout", "note": "devops English" },
+ { "prose": "پیاده‌سازی کش با استفاده از Redis انجام شد.", "expect": "rtl", "category": "technical-persian", "source": "holdout", "note": "cache impl" },
+
+ { "prose": "Async/Await syntax یعنی نوشتن کد ناهمگام به شکل همگام.", "expect": "rtl", "category": "technical-persian", "source": "holdout", "note": "async explanation" },
+ { "prose": "Kubernetes چیست؟", "expect": "rtl", "category": "short-heading", "source": "holdout", "note": "single Latin heading" },
+ { "prose": "Amazon Web Services چیست؟", "expect": "rtl", "category": "short-heading", "source": "holdout", "note": "three Latin words + Persian" },
+ { "prose": "Amazon Web Services Cloud Platform چیست؟", "expect": "rtl", "category": "short-heading", "source": "holdout", "note": "five Latin product words + Persian, no function words" },
+ { "prose": "The book is written in the Persian تاریخ genre.", "expect": "ltr", "category": "english-persian-tail", "source": "holdout", "note": "long English with Persian noun" },
+ { "prose": "In Persian, the word تشکر means thank you.", "expect": "ltr", "category": "english-persian-tail", "source": "holdout", "note": "linguistic English sentence" },
+
+ { "prose": "PHP، Ruby، Python و Go", "expect": "rtl", "category": "technical-persian", "source": "holdout", "note": "language list, Persian punctuation" },
+ { "prose": "مرحله ۱: کلون کردن مخزن با git clone", "expect": "rtl", "category": "cli", "source": "holdout", "note": "step in Persian" },
+ { "prose": "Step 1: Clone the repository with git clone.", "expect": null, "category": "cli", "source": "holdout", "note": "step in English" },
+
+ { "prose": "> «هر چه سریع‌تر بهتر»، گفت مدیر.", "expect": "rtl", "category": "markdown-blockquote", "source": "holdout", "note": "Persian blockquote with quotes" },
+ { "prose": "- سلام\n- خداحافظ", "expect": "rtl", "category": "markdown-bullet", "source": "holdout", "note": "simple Persian bullets" },
+ { "prose": "# API Reference", "expect": null, "category": "markdown-heading", "source": "holdout", "note": "English h1" },
+ { "prose": "## مرجع API", "expect": "rtl", "category": "markdown-heading", "source": "holdout", "note": "Persian h2 with acronym" },
+
+ { "prose": "| ستون یک | ستون دو |\n|---|---|\n| مقدار الف | مقدار ب |", "expect": "rtl", "category": "table", "source": "holdout", "note": "Persian table" },
+ { "prose": "Backend Engineer", "expect": null, "category": "table", "source": "holdout", "note": "role, all Latin" },
+ { "prose": "مهندس نرم‌افزار", "expect": "rtl", "category": "table", "source": "holdout", "note": "role in Persian" },
+
+ { "prose": "شما می‌توانید با استفاده از HTTPS به سرور متصل شوید.", "expect": "rtl", "category": "technical-persian", "source": "holdout", "note": "TLS connect" },
+ { "prose": "HTTPS uses TLS to encrypt the connection.", "expect": null, "category": "english-pure", "source": "holdout", "note": "TLS in English" },
+ { "prose": "نسخه‌ی 3.11 پایتون منتشر شد.", "expect": "rtl", "category": "version", "source": "holdout", "note": "python release, Persian" },
+
+ { "prose": "شكرا لك على المساعدة.", "expect": "rtl", "category": "arabic", "source": "holdout", "note": "Arabic thanks" },
+ { "prose": "الحياة جميلة والوقت ثمين.", "expect": "rtl", "category": "arabic", "source": "holdout", "note": "Arabic prose" },
+ { "prose": "מה שלומך היום?", "expect": "rtl", "category": "hebrew", "source": "holdout", "note": "Hebrew — how are you" },
+ { "prose": "אני אוהב ללמוד שפות חדשות.", "expect": "rtl", "category": "hebrew", "source": "holdout", "note": "Hebrew — I love learning languages" },
+ { "prose": "پاکستان کے دارالحکومت اسلام آباد ہے.", "expect": "rtl", "category": "urdu", "source": "holdout", "note": "Urdu sentence" },
+
+ { "prose": "لطفا این متن را با دقت مطالعه کنید.", "expect": "rtl", "category": "persian-formal", "source": "holdout", "note": "formal request" },
+ { "prose": "خطاهای رایج در برنامه‌نویسی همزمان.", "expect": "rtl", "category": "academic", "source": "holdout", "note": "concurrency title" },
+ { "prose": "مطالعه‌ی موردی: بیماری کووید-۱۹.", "expect": "rtl", "category": "medical", "source": "holdout", "note": "case study" },
+ { "prose": "طرفین ملزم به رعایت مفاد قرارداد هستند.", "expect": "rtl", "category": "legal", "source": "holdout", "note": "contract clause" },
+
+ { "prose": "برای اجرا: node index.js", "expect": "rtl", "category": "cli", "source": "holdout", "note": "run command in Persian" },
+ { "prose": "خطای SIGSEGV در تابع main رخ داد", "expect": "rtl", "category": "technical-persian", "source": "holdout", "note": "segfault in Persian" },
+ { "prose": "SELECT COUNT(*) FROM orders WHERE status = 'paid'", "expect": null, "category": "sql", "source": "holdout", "note": "SQL count" },
+ { "prose": "کوئری بالا تعداد سفارش‌های پرداخت‌شده را می‌شمارد.", "expect": "rtl", "category": "sql", "source": "holdout", "note": "SQL explanation Persian" },
+
+ { "prose": "چطور می‌توان یک API RESTful طراحی کرد؟", "expect": "rtl", "category": "technical-persian", "source": "holdout", "note": "how-to Persian" },
+ { "prose": "How can we design a RESTful API?", "expect": null, "category": "english-pure", "source": "holdout", "note": "how-to English" },
+ { "prose": "Nginx به عنوان reverse proxy تنظیم شد.", "expect": "rtl", "category": "technical-persian", "source": "holdout", "note": "nginx config in Persian" },
+ { "prose": "Nginx has been configured as a reverse proxy.", "expect": null, "category": "english-pure", "source": "holdout", "note": "nginx config in English" }
+]

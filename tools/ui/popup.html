@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>popup UI tests</title>
+<script src="stub.js"></script>
+</head>
+<body>
+<script>
+// Loads the REAL popup.html markup and styles into this page, then the
+// real match.js and popup.js on top of the API stub.
+//   ?case=fresh     a user from before this feature
+//   ?case=saved     fontScale 120 already stored
+(async function () {
+  const S = __stub;
+  const $ = (id) => document.getElementById(id);
+  const kase = new URLSearchParams(location.search).get("case") || "fresh";
+  const OTHER_SYNC = { rtlMode: "always", fontEnabled: true, lineSpacing: true,
+                       debugMode: false, siteOff: { "example.org": true } };
+
+  S.manifest = JSON.parse(S.readFile("../../manifest.json"));
+  S.sync = JSON.parse(JSON.stringify(OTHER_SYNC));
+  if (kase === "saved") S.sync.fontScale = 120;
+  const ov = {};
+  for (let i = 0; i < 12; i++) ov["k" + i] = i % 2 ? "rtl" : "ltr";
+  if (kase === "fresh") S.local = { overrides: ov, unrelated: 1 };
+
+  const doc = new DOMParser().parseFromString(S.readFile("../../popup.html"), "text/html");
+  // Inline any <style> the popup still has (older builds), plus the
+  // linked popup.css introduced in the v1.40 refactor. The linked
+  // sheet is read from disk and injected inline so this harness
+  // stays synchronous.
+  for (const st of doc.querySelectorAll("style")) {
+    const s = document.createElement("style");
+    s.textContent = st.textContent.replace(/url\("fonts\//g, 'url("../../fonts/');
+    document.head.appendChild(s);
+  }
+  for (const link of doc.querySelectorAll('link[rel="stylesheet"]')) {
+    const href = link.getAttribute("href");
+    if (!href || /^https?:/.test(href)) continue;
+    try {
+      const css = S.readFile("../../" + href);
+      const s = document.createElement("style");
+      s.textContent = css.replace(/url\("fonts\//g, 'url("../../fonts/');
+      document.head.appendChild(s);
+    } catch (_) { /* file missing — the popup test will fail naturally */ }
+  }
+  for (const n of [...doc.body.childNodes]) {
+    if (n.nodeName !== "SCRIPT") document.body.appendChild(document.importNode(n, true));
+  }
+
+  const stepMsgs = () => S.messages.filter((m) => "fontScale" in m).map((m) => m.fontScale);
+  const key = (el, k) => el.dispatchEvent(new KeyboardEvent("keydown", { key: k, bubbles: true }));
+  const fa = (n) => n.toLocaleString("fa-IR") + "٪";
+
+  try {
+    await S.loadScript("../../match.js");
+    await S.loadScript("../../sites.js");
+    await S.loadScript("../../popup.js");
+    await S.wait(100);
+
+    if (kase === "saved") {
+      await S.test("font size persistence: stored value is shown", async () => {
+        S.assert($("scale-val").textContent === fa(120), "shows " + $("scale-val").textContent);
+        S.assert($("scale").classList.contains("changed"), "not marked as changed");
+      });
+      await S.test("no overrides: reset row stays hidden", async () => {
+        S.assert($("reset").hidden, "reset row visible with nothing to clear");
+      });
+    } else {
+      await S.test("font size default shows 100% and writes nothing", async () => {
+        S.assert($("scale-val").textContent === fa(100), "shows " + $("scale-val").textContent);
+        S.assert(!("fontScale" in S.sync), "fontScale written on open");
+        S.assert($("scale-up").getAttribute("aria-disabled") === "false", "+ disabled at 100");
+        S.assert($("scale-down").getAttribute("aria-disabled") === "false", "- disabled at 100");
+      });
+
+      await S.test("font size increase: storage + live message", async () => {
+        $("scale-up").click();
+        await S.wait(30);
+        S.assert(S.sync.fontScale === 110, "stored " + S.sync.fontScale);
+        S.assert($("scale-val").textContent === fa(110), "shows " + $("scale-val").textContent);
+        S.assert(stepMsgs().join() === "110", "messages " + stepMsgs().join());
+      });
+
+      await S.test("font size caps at 130%", async () => {
+        $("scale-up").click(); await S.wait(20);
+        $("scale-up").click(); await S.wait(20);
+        $("scale-up").click(); await S.wait(20);
+        S.assert(S.sync.fontScale === 130, "stored " + S.sync.fontScale);
+        S.assert($("scale-up").getAttribute("aria-disabled") === "true", "+ still enabled at max");
+        S.assert(!$("scale-up").disabled, "+ uses disabled (would drop focus)");
+      });
+
+      await S.test("font size decrease, floor at 90%", async () => {
+        for (let i = 0; i < 6; i++) { $("scale-down").click(); await S.wait(20); }
+        S.assert(S.sync.fontScale === 90, "stored " + S.sync.fontScale);
+        S.assert($("scale-down").getAttribute("aria-disabled") === "true", "- still enabled at min");
+      });
+
+      await S.test("popup keyboard: arrow keys step the size", async () => {
+        $("scale-up").focus();
+        S.assert(document.activeElement === $("scale-up"), "+ is not focusable");
+        key($("scale-up"), "ArrowUp"); await S.wait(20);
+        key($("scale-up"), "ArrowRight"); await S.wait(20);
+        S.assert(S.sync.fontScale === 110, "after two ups: " + S.sync.fontScale);
+        key($("scale-down"), "ArrowDown"); await S.wait(20);
+        S.assert(S.sync.fontScale === 100, "after down: " + S.sync.fontScale);
+      });
+
+      await S.test("popup keyboard: controls are labelled, focusable buttons", async () => {
+        for (const id of ["scale-down", "scale-up", "reset-btn", "toggle-debug"]) {
+          const el = $(id);
+          S.assert(el.tagName === "BUTTON" && el.type === "button", id + " is not a button");
+          S.assert(el.tabIndex === 0, id + " is not in the tab order");
+        }
+        for (const id of ["scale-down", "scale-up", "reset-btn", "toggle-site", "toggle-font"]) {
+          S.assert(($(id).getAttribute("aria-label") || "").length > 2, id + " has no aria-label");
+        }
+        // Line spacing tri-mode and the readability preset row are segmented
+        // groups: each button carries its own aria-label, and the group
+        // itself is labelled by an adjacent element.
+        for (const b of document.querySelectorAll("#lh-seg button, #preset-seg button")) {
+          S.assert((b.getAttribute("aria-label") || "").length > 1, "segment button has no aria-label");
+        }
+        S.assert($("lh-seg").getAttribute("role") === "radiogroup", "lh-seg role wrong");
+        S.assert(!!$("lh-seg").getAttribute("aria-labelledby"), "lh-seg has no label");
+        S.assert($("scale").getAttribute("role") === "group", "stepper is not a group");
+        S.assert(!!$("scale").getAttribute("aria-labelledby"), "stepper has no label");
+      });
+
+      await S.test("popup keyboard: focus ring is defined for new controls", async () => {
+        const css = [...document.querySelectorAll("style")].map((s) => s.textContent).join("\n");
+        S.assert(/\.step button:focus-visible/.test(css), "no focus style for stepper");
+        S.assert(/\.reset button:focus-visible/.test(css), "no focus style for reset");
+      });
+
+      await S.test("override count is shown", async () => {
+        S.assert(!$("reset").hidden, "reset row hidden");
+        S.assert($("reset-text").textContent.includes("۱۲"), "count text: " + $("reset-text").textContent);
+      });
+
+      await S.test("copy says overrides persist, not 'until refresh'", async () => {
+        const t = document.querySelector(".callout").textContent;
+        S.assert(!/تا رفرش/.test(t), "stale copy still present");
+        S.assert(/با رفرش هم می‌ماند/.test(t), "new copy missing");
+      });
+
+      await S.test("clear overrides: keyboard-activatable, clears only overrides", async () => {
+        $("reset-btn").focus();
+        S.assert(document.activeElement === $("reset-btn"), "reset button not focusable");
+        const syncBefore = JSON.stringify(S.sync);
+        $("reset-btn").click();          // Enter/Space on a <button> is a click
+        await S.wait(50);
+        S.assert(!("overrides" in S.local), "overrides still stored");
+        S.assert(S.local.unrelated === 1, "other local data removed");
+        S.assert(JSON.stringify(S.sync) === syncBefore, "sync settings changed");
+        S.assert(S.messages.some((m) => m.clearOverrides === true), "active tab not told");
+      });
+
+      await S.test("clear overrides: feedback shown, focus kept in the popup", async () => {
+        S.assert($("reset").classList.contains("done"), "no done state");
+        S.assert($("reset-text").textContent.includes("پاک شد"), "feedback: " + $("reset-text").textContent);
+        S.assert(document.activeElement === $("reset-text"), "focus dropped to " + document.activeElement.tagName);
+      });
+
+      // -------- v1.40 popup feature tests --------
+
+      await S.test("line spacing tri-mode: legacy boolean migrates on open", async () => {
+        // S.sync had lineSpacing: true (legacy). Popup should render
+        // "comfortable" selected and NOT the boolean toggle.
+        const buttons = document.querySelectorAll("#lh-seg button");
+        S.assert(buttons.length === 3, "expected 3 lh buttons, got " + buttons.length);
+        const on = Array.from(buttons).find((b) => b.getAttribute("aria-checked") === "true");
+        S.assert(on && on.dataset.lh === "comfortable",
+          "expected comfortable checked, got " + (on && on.dataset.lh));
+      });
+
+      await S.test("line spacing tri-mode: click writes string value", async () => {
+        S.messages.length = 0;
+        document.querySelector("#lh-seg button[data-lh='compact']").click();
+        await S.wait(30);
+        S.assert(S.sync.lineSpacing === "compact",
+          "stored value: " + JSON.stringify(S.sync.lineSpacing));
+        S.assert(S.messages.some((m) => m.lineSpacing === "compact"),
+          "no message sent to active tab");
+      });
+
+      await S.test("readability presets: apply writes both fontScale and lineSpacing", async () => {
+        S.messages.length = 0;
+        document.querySelector("#preset-seg button[data-preset='comfortable']").click();
+        await S.wait(30);
+        S.assert(S.sync.fontScale === 110, "fontScale after preset: " + S.sync.fontScale);
+        S.assert(S.sync.lineSpacing === "comfortable", "lineSpacing after preset: " + S.sync.lineSpacing);
+        const m = S.messages.find((x) => "fontScale" in x && "lineSpacing" in x);
+        S.assert(!!m, "combined message not sent");
+      });
+
+      await S.test("readability presets: highlight tracks the current pair", async () => {
+        const on = document.querySelector("#preset-seg button[aria-checked='true']");
+        S.assert(on && on.dataset.preset === "comfortable",
+          "expected comfortable highlighted, got " + (on && on.dataset.preset));
+        // Adjust fontScale away from preset → preset highlight clears.
+        $("scale-up").click();          // 110 → 120
+        await S.wait(30);
+        const on2 = document.querySelector("#preset-seg button[aria-checked='true']");
+        S.assert(!on2, "preset stayed highlighted after fontScale drift");
+      });
+
+      await S.test("shortcut hint is visible in the callout", async () => {
+        const t = document.querySelector(".callout").textContent;
+        S.assert(/Alt\+Shift\+F/.test(t), "shortcut label missing");
+        S.assert(/میان‌بر/.test(t), "shortcut hint copy missing");
+      });
+    }
+  } catch (e) { S.fail(e); return; }
+  S.finish();
+})();
+</script>
+</body>
+</html>

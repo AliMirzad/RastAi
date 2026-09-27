@@ -1,0 +1,383 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RastAI — table rendering hardening</title>
+  <style>
+    body { font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 1100px; }
+    h1 { font-size: 18px; }
+    .suite { margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; }
+    .suite h2 { font-size: 13px; margin: 0 0 6px; }
+    .row { padding: 2px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+    .ok { color: #0a7f2e; }
+    .fail { color: #b00020; font-weight: 600; }
+    #summary { padding: 8px 14px; border-radius: 6px; margin: 12px 0; font-size: 14px; }
+    #summary.pass { background: #e7f5ec; color: #0a7f2e; }
+    #summary.fail { background: #fdeceb; color: #b00020; }
+    .fixture { position: absolute; left: -9999px; top: 0; width: 900px; font-size: 16px; line-height: 1.6; }
+    /* Minimal site-like table styling — no border, thin lines, the shape
+       ChatGPT ships. If our fix relies on borders being present, that
+       reliance shows up here. */
+    .fixture table { border-collapse: collapse; width: 100%; }
+    .fixture table th, .fixture table td { border-bottom: 1px solid #eee; }
+    .fixture table th { text-align: start; font-weight: 600; }
+
+    /* Mirror of the SHIPPING content.js table CSS (as of v1.40-features)
+       plus the v1.41 fix layered on top. The v1.41 rules are the ones
+       under test; removing them re-produces the bug. */
+    html.rastai-rtl-on [data-rastai-rtl="rtl"]:not(table){
+      direction:rtl!important;text-align:right!important;unicode-bidi:isolate!important;}
+    html.rastai-rtl-on [data-rastai-rtl="ltr"]:not(table){
+      direction:ltr!important;text-align:left!important;unicode-bidi:isolate!important;}
+    html.rastai-rtl-on table[data-rastai-rtl="rtl"]{direction:rtl!important;}
+    html.rastai-rtl-on table[data-rastai-rtl="ltr"]{direction:ltr!important;}
+    /* v1.41 table fix — under test */
+    html.rastai-rtl-on table[data-rastai-rtl="rtl"] :is(th,td){
+      padding-inline:12px!important;padding-block:6px!important;
+      text-align:start!important;}
+    html.rastai-rtl-on table[data-rastai-rtl="rtl"] :is(th,td):not([data-rastai-rtl]){
+      direction:ltr!important;unicode-bidi:isolate!important;}
+    html.rastai-rtl-on [data-rastai-rtl="rtl"] code:not(pre code):not([data-rastai-rtl]),
+    html.rastai-rtl-on [data-rastai-rtl="ltr"] code:not(pre code):not([data-rastai-rtl]){
+      direction:ltr!important;text-align:left!important;unicode-bidi:isolate!important;}
+    html.rastai-rtl-on bdi[data-rastai-iso]{
+      direction:ltr!important;unicode-bidi:isolate!important;display:inline;
+      font:inherit;color:inherit;background:transparent;padding:0;margin:0;border:0;}
+  </style>
+</head>
+<body>
+  <h1>RastAI — table rendering hardening</h1>
+  <p>Reproduces and pins the ChatGPT table-merging bug. Every visual
+  assertion measures real layout (<code>getBoundingClientRect</code>) on
+  fixtures whose shape matches the user's report.</p>
+
+  <div id="summary">running…</div>
+  <div id="results"></div>
+  <div id="stage" class="fixture"></div>
+
+  <script src="../engine.js"></script>
+  <script>
+    document.documentElement.classList.add("rastai-rtl-on");
+
+    const ARROWS = "\\u2190-\\u21FF\\u27F0-\\u27FF\\u2900-\\u297F";
+    const LATIN_RUN = new RegExp(
+      "[\\[({]?[\\-/@$_]*[A-Za-z0-9_$](?:[A-Za-z0-9._,;:=!<>+*/%&|?~^#\\[\\](){}@\\\\$_ " + ARROWS + "\\-]*" +
+      "[A-Za-z0-9_$\\]})>])?|[" + ARROWS + "]+", "g");
+    const NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/" + ARROWS + "]");
+
+    // ---- harness ----
+    const results = document.getElementById("results");
+    const summary = document.getElementById("summary");
+    const stage = document.getElementById("stage");
+    let passed = 0, failed = 0, assertions = 0;
+    const failLog = [];
+
+    function suite(name, fn) {
+      const div = document.createElement("div");
+      div.className = "suite";
+      div.innerHTML = "<h2>" + name + "</h2>";
+      results.appendChild(div);
+      const t = {
+        eq(label, got, want) {
+          assertions++;
+          const ok = got === want;
+          if (ok) passed++; else { failed++; failLog.push(name + " :: " + label + " want=" + want + " got=" + got); }
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.textContent = (ok ? "✓ " : "✗ ") + label + " want " + JSON.stringify(want) + " got " + JSON.stringify(got);
+          div.appendChild(row);
+        },
+        assert(label, cond, detail) {
+          assertions++;
+          const ok = !!cond;
+          if (ok) passed++; else { failed++; failLog.push(name + " :: " + label + "  " + (detail||"")); }
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.textContent = (ok ? "✓ " : "✗ ") + label + (!ok && detail ? "   " + detail : "");
+          div.appendChild(row);
+        }
+      };
+      try { fn(t); } catch (e) { failed++; const row = document.createElement("div"); row.className = "row fail"; row.textContent = "✗ threw: " + e.message; div.appendChild(row); }
+    }
+
+    // ---- helpers ----
+    function wrapWith(text) {
+      LATIN_RUN.lastIndex = 0;
+      const parts = []; let last = 0, m;
+      while ((m = LATIN_RUN.exec(text))) {
+        const iso = NEEDS_ISO.test(m[0]);
+        if (!iso) continue;
+        if (m.index > last) parts.push({t: text.slice(last, m.index), iso: false});
+        parts.push({t: m[0], iso: true});
+        last = LATIN_RUN.lastIndex;
+      }
+      if (last < text.length) parts.push({t: text.slice(last), iso: false});
+      const esc = (s) => s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+      if (!parts.some(p => p.iso)) return esc(text);
+      return parts.map(p => p.iso
+        ? '<bdi dir="ltr" data-rastai-iso="1">' + esc(p.t) + '</bdi>'
+        : esc(p.t)).join("");
+    }
+
+    function markCell(td, text) {
+      // Content-script-equivalent per-cell marking: use the engine to
+      // decide, wrap Latin runs, and set the mark attribute. Cells the
+      // engine returns null for stay unmarked (an English cell).
+      const decision = RastAIEngine.directionOf(text);
+      if (decision.dir === "rtl") {
+        td.setAttribute("data-rastai-rtl", "rtl");
+        td.setAttribute("dir", "rtl");
+        td.innerHTML = wrapWith(text);
+      } else if (decision.dir === "ltr") {
+        td.setAttribute("data-rastai-rtl", "ltr");
+        td.setAttribute("dir", "ltr");
+        td.innerHTML = wrapWith(text);
+      } else {
+        // English-only / null: no mark, no wrapping. The v1.41 CSS
+        // catches this case at :not([data-rastai-rtl]).
+        td.textContent = text;
+      }
+    }
+
+    function buildTable(rows) {
+      stage.innerHTML = "";
+      const t = document.createElement("table");
+      t.setAttribute("data-rastai-rtl", "rtl");
+      t.setAttribute("dir", "rtl");
+      for (const row of rows) {
+        const tr = document.createElement("tr");
+        for (const cell of row) {
+          const el = document.createElement(cell.header ? "th" : "td");
+          if (cell.html) {
+            // Preserve the caller-supplied inline structure verbatim,
+            // then let the mark pass decide direction on the text.
+            el.innerHTML = cell.html;
+            const decision = RastAIEngine.directionOf(el.textContent);
+            if (decision.dir === "rtl") { el.setAttribute("data-rastai-rtl","rtl"); el.setAttribute("dir","rtl"); }
+            else if (decision.dir === "ltr") { el.setAttribute("data-rastai-rtl","ltr"); el.setAttribute("dir","ltr"); }
+          } else {
+            markCell(el, cell.text || "");
+          }
+          tr.appendChild(el);
+        }
+        t.appendChild(tr);
+      }
+      stage.appendChild(t);
+      return t;
+    }
+
+    function rectOf(el) { return el.getBoundingClientRect(); }
+    function firstCharRect(el) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+      const n = walker.nextNode();
+      if (!n) return null;
+      const r = document.createRange();
+      r.setStart(n, 0); r.setEnd(n, 1);
+      return r.getBoundingClientRect();
+    }
+    function lastCharRect(el) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+      let last = null, n;
+      while ((n = walker.nextNode())) last = n;
+      if (!last) return null;
+      const r = document.createRange();
+      r.setStart(last, Math.max(0, last.data.length - 1));
+      r.setEnd(last, last.data.length);
+      return r.getBoundingClientRect();
+    }
+
+    // ---- reproduction cases ----
+
+    suite("reported bug: Compile Time / Runtime table", (t) => {
+      const table = buildTable([
+        [ { header: true, text: "مرحله" }, { header: true, text: "اتفاق" } ],
+        [ { text: "Compile Time" }, { text: "کامپایلر آرگومان‌های نوع را بررسی می‌کند" } ],
+        [ { text: "Compile Time" }, { text: "ناسازگاری نوع‌ها را پیدا می‌کند" } ],
+        [ { text: "Runtime" },      { text: "JVM معمولاً چیزی را فقط به‌عنوان کلاس خام Box می‌بیند" } ],
+        [ { text: "Runtime" },      { html: "<code>Box&lt;String&gt;</code> و <code>Box&lt;Integer&gt;</code> دو کلاس اجرایی جدا نیستند" } ]
+      ]);
+
+      // Every English cell must NOT be marked RTL — a marked-RTL table
+      // is a column-order signal, not a content-direction signal.
+      const englishCells = Array.from(table.querySelectorAll("td, th"))
+        .filter((c) => /^(Compile Time|Runtime)$/.test(c.textContent.trim()));
+      for (const c of englishCells) {
+        t.assert("English cell '" + c.textContent.trim() + "' is not marked rtl",
+          c.getAttribute("data-rastai-rtl") !== "rtl",
+          "mark=" + c.getAttribute("data-rastai-rtl"));
+        const dir = getComputedStyle(c).direction;
+        t.assert("English cell '" + c.textContent.trim() + "' computed direction is ltr",
+          dir === "ltr", "direction=" + dir);
+      }
+
+      // Persian cells stay RTL.
+      const persianCells = Array.from(table.querySelectorAll("td"))
+        .filter((c) => /^کامپایلر/.test(c.textContent.trim()) || /^JVM/.test(c.textContent.trim()));
+      for (const c of persianCells) {
+        t.assert("Persian-content cell '" + c.textContent.trim().slice(0, 20) + "…' is rtl",
+          c.getAttribute("data-rastai-rtl") === "rtl",
+          "mark=" + c.getAttribute("data-rastai-rtl"));
+      }
+    });
+
+    suite("cell boundary: adjacent cells do not visually merge", (t) => {
+      const table = buildTable([
+        [ { text: "Compile Time" }, { text: "کامپایلر آرگومان‌های نوع را بررسی می‌کند" } ],
+        [ { text: "Runtime" },      { text: "JVM معمولاً چیزی را فقط به‌عنوان کلاس خام Box می‌بیند" } ]
+      ]);
+      for (const tr of table.querySelectorAll("tbody tr, tr")) {
+        const [a, b] = tr.querySelectorAll("td");
+        if (!a || !b) continue;
+        // In an RTL table the first td (a) is the RIGHT column, the
+        // second (b) is the LEFT column. We check inline gap between
+        // their contents by picking the character of each cell nearest
+        // the boundary — a's leftmost char and b's rightmost.
+        const aFirst = firstCharRect(a);         // 'C' of "Compile Time"
+        const bLast = lastCharRect(b);           // last Persian char
+        if (!aFirst || !bLast) { t.assert("skipped, no text nodes", false); continue; }
+        // aFirst is at the LEFT edge of a's content. bLast is at the
+        // RIGHT edge of b's content. The gap between them must be
+        // meaningful (>= 8px), not zero or negative.
+        const gap = aFirst.left - bLast.right;
+        t.assert("inline gap between adjacent cells " +
+          "'" + a.textContent.trim() + "' / '" + b.textContent.trim().slice(0, 20) + "…' >= 8px",
+          gap >= 8, "gap=" + gap.toFixed(1) + "px");
+      }
+    });
+
+    suite("English cell renders letters LEFT-to-RIGHT", (t) => {
+      const table = buildTable([
+        [ { text: "Compile Time" }, { text: "کامپایلر آرگومان‌های نوع را بررسی می‌کند" } ]
+      ]);
+      const a = table.querySelector("td");           // the English cell
+      const first = firstCharRect(a);                 // 'C'
+      const last = lastCharRect(a);                   // 'e'
+      t.assert("'C' visually left of 'e' in Compile Time",
+        first.left < last.left,
+        "C@" + first.left.toFixed(1) + " e@" + last.left.toFixed(1));
+    });
+
+    suite("mixed technical cell: internal generic stays LTR, sentence RTL", (t) => {
+      const table = buildTable([
+        [ { text: "Runtime" }, { html: "<code>Box&lt;String&gt;</code> و <code>Box&lt;Integer&gt;</code> دو کلاس اجرایی جدا نیستند" } ]
+      ]);
+      const cells = table.querySelectorAll("td");
+      const persianCell = cells[1];
+      t.eq("Persian-with-code cell is rtl", persianCell.getAttribute("data-rastai-rtl"), "rtl");
+      // Both <code> elements should read LEFT-to-RIGHT internally.
+      const codes = persianCell.querySelectorAll("code");
+      for (const c of codes) {
+        const first = firstCharRect(c), last = lastCharRect(c);
+        t.assert("<code> " + JSON.stringify(c.textContent) + ": first char left of last",
+          first.left < last.left,
+          "first@" + first.left.toFixed(1) + " last@" + last.left.toFixed(1));
+      }
+    });
+
+    suite("cell shape sweep (Persian/English/mixed/numeric/URL/generic)", (t) => {
+      const cases = [
+        { name: "Persian | Persian",  a: "مرحله", b: "توضیح" },
+        { name: "English | Persian",  a: "Compile Time", b: "کامپایلر آرگومان‌های نوع را بررسی می‌کند" },
+        { name: "Persian | English",  a: "توضیح", b: "The Java Virtual Machine" },
+        { name: "English | English",  a: "Compile Time", b: "Runtime" },
+        { name: "mixed | mixed",      a: "Java, Spring", b: "متد getClass() را صدا بزن" },
+        { name: "number | Persian",   a: "127.0.0.1:8080", b: "آدرس سرور" },
+        { name: "code | Persian",     a: "getClass()", b: "کلاس runtime را می‌دهد" },
+        { name: "URL | Persian",      a: "/api/users", b: "لیست کاربران" },
+        { name: "generic | Persian",  a: "List<String>", b: "لیستی از رشته‌ها" }
+      ];
+      for (const c of cases) {
+        const table = buildTable([[{ text: c.a }, { text: c.b }]]);
+        const [ta, tb] = table.querySelectorAll("td");
+        const decisionA = RastAIEngine.directionOf(c.a);
+        const decisionB = RastAIEngine.directionOf(c.b);
+
+        // The mark attribute on each cell must match the engine's
+        // decision — the table's own RTL direction does not override
+        // per-cell direction.
+        t.eq(c.name + " — cell A mark", ta.getAttribute("data-rastai-rtl"), decisionA.dir);
+        t.eq(c.name + " — cell B mark", tb.getAttribute("data-rastai-rtl"), decisionB.dir);
+
+        // Gap sanity: adjacent cells' rects must not overlap.
+        const rA = rectOf(ta), rB = rectOf(tb);
+        t.assert(c.name + " — cell rects do not overlap",
+          rA.left >= rB.right || rB.left >= rA.right,
+          "rA=" + JSON.stringify({l:rA.left,r:rA.right}) + " rB=" + JSON.stringify({l:rB.left,r:rB.right}));
+      }
+    });
+
+    suite("headers: English th does not flip inside an RTL table", (t) => {
+      // A table whose data is Persian but whose header is English —
+      // e.g. Type / Description. The header cells should render LTR.
+      const table = buildTable([
+        [ { header: true, text: "Type" }, { header: true, text: "Description" } ],
+        [ { text: "List<String>" }, { text: "لیستی از رشته‌ها" } ]
+      ]);
+      const hdrs = table.querySelectorAll("th");
+      for (const h of hdrs) {
+        t.assert("English th '" + h.textContent + "' is not marked rtl",
+          h.getAttribute("data-rastai-rtl") !== "rtl");
+        const dir = getComputedStyle(h).direction;
+        t.assert("English th '" + h.textContent + "' computed direction is ltr",
+          dir === "ltr", "direction=" + dir);
+      }
+      // First char of "Type" must be visually left of its last char.
+      const t1 = hdrs[0];
+      const first = firstCharRect(t1), last = lastCharRect(t1);
+      t.assert("'T' left of 'e' in Type header", first.left < last.left);
+    });
+
+    suite("nested elements inside a cell", (t) => {
+      // p / span / strong / em / code / a inside a Persian cell.
+      const table = buildTable([
+        [ { header: true, text: "مورد" }, { header: true, text: "توضیح" } ],
+        [ { text: "متد" },
+          { html: "<p>در <em>پارامتر</em> نوع <strong>generic</strong> " +
+                  "<a href='#'>List&lt;String&gt;</a> استفاده کن.</p>" }
+        ]
+      ]);
+      const cell = table.querySelectorAll("td")[1];
+      t.eq("cell is rtl", cell.getAttribute("data-rastai-rtl"), "rtl");
+      // <a> and <code>-adjacent elements are still readable — check
+      // that computed direction of nested inline elements is rtl (they
+      // inherit from the cell, no rogue LTR override).
+      for (const tag of ["em", "strong", "a"]) {
+        const el = cell.querySelector(tag);
+        if (!el) continue;
+        t.assert("nested <" + tag + "> inherits rtl",
+          getComputedStyle(el).direction === "rtl");
+      }
+    });
+
+    suite("regression pins for the exact rows from the report", (t) => {
+      const rows = [
+        [ "Compile Time", "کامپایلر آرگومان‌های نوع را بررسی می‌کند" ],
+        [ "Compile Time", "ناسازگاری نوع‌ها را پیدا می‌کند" ],
+        [ "Compile Time", "T را با Bound آن جایگزین می‌کند" ],
+        [ "Compile Time", "Castهای لازم را اضافه می‌کند" ],
+        [ "Runtime",      "JVM معمولاً چیزی را فقط به‌عنوان کلاس خام Box می‌بیند" ],
+        [ "Runtime",      "Box<String> و Box<Integer> دو کلاس اجرایی جدا نیستند" ],
+        [ "Runtime",      "Cast در صورت آلوده‌شدن داده‌ها ممکن است شکست بخورد" ]
+      ];
+      for (const [a, b] of rows) {
+        const table = buildTable([[{text:a},{text:b}]]);
+        const [ta, tb] = table.querySelectorAll("td");
+        // The bug shape is that cell A's leftmost char sits within
+        // 4px of cell B's rightmost char. With the fix the gap must
+        // be at least 8px.
+        const aFirst = firstCharRect(ta);
+        const bLast = lastCharRect(tb);
+        const gap = aFirst.left - bLast.right;
+        t.assert("row '" + a + " | " + b.slice(0, 20) + "…' has readable gap",
+          gap >= 8, "gap=" + gap.toFixed(1) + "px");
+      }
+    });
+
+    summary.className = failed ? "fail" : "pass";
+    summary.textContent = (failed ? "FAIL — " : "OK — ") + passed + "/" + assertions +
+      " assertions passed" + (failed ? " (" + failed + " failed)" : "");
+    document.title = (failed ? "FAIL " : "OK ") + passed + "/" + assertions;
+    window.__testResults = { passed, failed, assertions, failLog };
+  </script>
+</body>
+</html>

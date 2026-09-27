@@ -1,0 +1,384 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RastAI — BiDi visual regression tests</title>
+  <style>
+    body { font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 1000px; }
+    h1 { font-size: 18px; }
+    .suite { margin: 12px 0; border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; }
+    .suite h2 { font-size: 13px; margin: 0 0 6px; }
+    .row { padding: 2px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+    .ok { color: #0a7f2e; }
+    .fail { color: #b00020; font-weight: 600; }
+    #summary { padding: 8px 14px; border-radius: 6px; margin: 12px 0; font-size: 14px; }
+    #summary.pass { background: #e7f5ec; color: #0a7f2e; }
+    #summary.fail { background: #fdeceb; color: #b00020; }
+    .fixture { position: absolute; left: -9999px; top: 0; width: 800px; font-size: 16px; line-height: 1.8; }
+  </style>
+</head>
+<body>
+  <h1>RastAI — BiDi visual regression tests</h1>
+  <p>Verifies inline token ORDER in RTL paragraphs using
+  <code>Range.getBoundingClientRect()</code>. If wrapping is missing, a
+  Latin token pair like &laquo;Java, Spring&raquo; will be split visually
+  (the comma jumps sides). Every assertion below checks a specific
+  character's X position against another — no visual eyeballing.</p>
+
+  <div id="summary">running…</div>
+  <div id="results"></div>
+
+  <!-- fixtures rendered as real RTL paragraphs -->
+  <div id="stage" class="fixture"></div>
+
+  <script src="../engine.js"></script>
+  <script>
+    // ------- test harness ---------------------------------------------
+    const results = document.getElementById("results");
+    const summary = document.getElementById("summary");
+    let passed = 0, failed = 0, assertions = 0;
+    const failLog = [];
+
+    function suite(name, fn) {
+      const div = document.createElement("div");
+      div.className = "suite";
+      div.innerHTML = "<h2>" + name + "</h2>";
+      results.appendChild(div);
+      const ctx = {
+        eq(label, got, want) {
+          assertions++;
+          const ok = got === want;
+          if (ok) passed++; else { failed++; failLog.push(name + " :: " + label + " want=" + want + " got=" + got); }
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.textContent = (ok ? "✓ " : "✗ ") + label +
+            "   want " + JSON.stringify(want) + "   got " + JSON.stringify(got);
+          div.appendChild(row);
+        },
+        assert(label, cond, detail) {
+          assertions++;
+          const ok = !!cond;
+          if (ok) passed++; else { failed++; failLog.push(name + " :: " + label + "  " + (detail||"")); }
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.textContent = (ok ? "✓ " : "✗ ") + label + (detail && !ok ? "   " + detail : "");
+          div.appendChild(row);
+        }
+      };
+      try { fn(ctx); } catch (e) {
+        failed++; failLog.push(name + " threw: " + e.message);
+        const row = document.createElement("div");
+        row.className = "row fail";
+        row.textContent = "✗ threw: " + e.message;
+        div.appendChild(row);
+      }
+    }
+
+    // ------- DOM helpers ---------------------------------------------
+    const stage = document.getElementById("stage");
+
+    function makeParagraph(html, dir) {
+      const p = document.createElement("p");
+      p.setAttribute("dir", dir || "rtl");
+      p.style.direction = dir || "rtl";
+      p.innerHTML = html;
+      stage.innerHTML = "";
+      stage.appendChild(p);
+      return p;
+    }
+
+    // Find the text node and local offset for a given index in the
+    // paragraph's flattened textContent. Boundary rule: a character at
+    // logical index i lives in the node whose start ≤ i AND i < end;
+    // `offset < data.length` (not ≤) — a node's data.length is a
+    // BOUNDARY, not a character position.
+    function nodeAt(el, idx) {
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+      let n, offset = idx;
+      while ((n = walker.nextNode())) {
+        if (offset < n.data.length) return { node: n, offset: offset };
+        offset -= n.data.length;
+      }
+      return null;
+    }
+
+    function xOf(el, substr) {
+      const idx = el.textContent.indexOf(substr);
+      if (idx < 0) return NaN;
+      const h = nodeAt(el, idx);
+      if (!h) return NaN;
+      const r = document.createRange();
+      r.setStart(h.node, h.offset);
+      r.setEnd(h.node, Math.min(h.node.data.length, h.offset + substr.length));
+      return r.getBoundingClientRect().left;
+    }
+
+    function xOfNth(el, substr, occ) {
+      const txt = el.textContent;
+      let idx = -1, from = 0;
+      for (let i = 0; i <= occ; i++) {
+        idx = txt.indexOf(substr, from);
+        if (idx < 0) return NaN;
+        from = idx + 1;
+      }
+      const h = nodeAt(el, idx);
+      if (!h) return NaN;
+      const r = document.createRange();
+      r.setStart(h.node, h.offset);
+      r.setEnd(h.node, Math.min(h.node.data.length, h.offset + substr.length));
+      return r.getBoundingClientRect().left;
+    }
+
+    // ------- Reproduce the "current wrapping" the extension would do.
+    // Mirror splitAndWrap logic locally so we can compare wrapped vs
+    // unwrapped visual order without loading content.js's full runtime.
+    const ARROWS = "\\u2190-\\u21FF\\u27F0-\\u27FF\\u2900-\\u297F";
+
+    // OLD regex (what v1.37 shipped)
+    const OLD_LATIN_RUN = new RegExp(
+      "[\\[({]?[A-Za-z](?:[A-Za-z0-9._,;:=!<>+*/%&|?~^#\\[\\](){} " + ARROWS + "\\-]*" +
+      "[A-Za-z0-9\\]})])?|[" + ARROWS + "]+", "g");
+    const OLD_NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:," + ARROWS + "]");
+
+    // NEW regex (proposed for v1.38 — widened start, end, and inner set)
+    const NEW_LATIN_RUN = new RegExp(
+      "[\\[({]?[\\-/@]*[A-Za-z0-9](?:[A-Za-z0-9._,;:=!<>+*/%&|?~^#\\[\\](){}@\\\\ " + ARROWS + "\\-]*" +
+      "[A-Za-z0-9\\]})>])?|[" + ARROWS + "]+", "g");
+    const NEW_NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/" + ARROWS + "]");
+
+    // Mirrors content.js's splitAndWrap, including the v1.42.4
+    // arrow-only skip: a run with no Latin letter/digit is left
+    // unwrapped so Unicode's bidi mirroring flips arrows inside RTL.
+    const HAS_LATIN = /[A-Za-z0-9_$]/;
+    function wrapWith(text, RUN, ISO) {
+      RUN.lastIndex = 0;
+      const parts = [];
+      let last = 0, m;
+      while ((m = RUN.exec(text))) {
+        const iso = ISO.test(m[0]);
+        if (!iso) continue;
+        if (!HAS_LATIN.test(m[0])) continue;    // arrow-only: let browser mirror
+        if (m.index > last) parts.push({t: text.slice(last, m.index), iso: false});
+        parts.push({t: m[0], iso: true});
+        last = RUN.lastIndex;
+      }
+      if (last < text.length) parts.push({t: text.slice(last), iso: false});
+      if (!parts.some(p => p.iso)) return text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
+      return parts.map(p => p.iso ? '<bdi dir="ltr" data-iso="1">' + p.t.replace(/&/g,"&amp;").replace(/</g,"&lt;") + '</bdi>'
+                                  : p.t.replace(/&/g,"&amp;").replace(/</g,"&lt;")).join("");
+    }
+
+    // Utility: does the new regex capture the full expected run?
+    function capturedFull(text, RUN, expected) {
+      RUN.lastIndex = 0;
+      let m;
+      while ((m = RUN.exec(text))) if (m[0] === expected) return true;
+      return false;
+    }
+
+    // ------- suites ---------------------------------------------------
+
+    // Baseline: engine direction still correct for BiDi corpus.
+    suite("engine direction (bidi corpus spot checks)", (t) => {
+      t.eq("از Java, Spring استفاده می‌کنیم.",
+        RastAIEngine.directionOf("از Java, Spring استفاده می‌کنیم.").dir, "rtl");
+      t.eq("پورت 127.0.0.1:8080 را بررسی کن",
+        RastAIEngine.directionOf("پورت 127.0.0.1:8080 را بررسی کن").dir, "rtl");
+      t.eq("ایمیل user@example.com و admin@example.com",
+        RastAIEngine.directionOf("ایمیل user@example.com و admin@example.com").dir, "rtl");
+      t.eq("The default value is مقدار پیش‌فرض when no user provides one.",
+        RastAIEngine.directionOf("The default value is مقدار پیش‌فرض when no user provides one.").dir, "ltr");
+    });
+
+    // Regex capture: NEW regex captures full runs the OLD regex broke.
+    suite("regex captures runs OLD regex lost", (t) => {
+      t.assert("127.0.0.1:8080  (OLD misses digit-led)",
+        !capturedFull("127.0.0.1:8080", OLD_LATIN_RUN, "127.0.0.1:8080") &&
+        capturedFull("127.0.0.1:8080", NEW_LATIN_RUN, "127.0.0.1:8080"),
+        "OLD did not capture; NEW must capture full run");
+
+      t.assert("List<String>, Map<String, Integer>",
+        capturedFull("List<String>, Map<String, Integer>", NEW_LATIN_RUN, "List<String>, Map<String, Integer>"),
+        "NEW must capture closing >");
+
+      t.assert("--force, --verbose",
+        capturedFull("--force, --verbose", NEW_LATIN_RUN, "--force, --verbose"),
+        "NEW must include leading --");
+
+      t.assert("user@example.com",
+        capturedFull("user@example.com", NEW_LATIN_RUN, "user@example.com"),
+        "NEW must not split on @");
+
+      t.assert("C:\\Temp",
+        capturedFull("C:\\Temp", NEW_LATIN_RUN, "C:\\Temp"),
+        "NEW must not split on \\");
+
+      t.assert("/api/users",
+        capturedFull("/api/users", NEW_LATIN_RUN, "/api/users"),
+        "NEW must accept leading /");
+    });
+
+    // Visual: with the NEW wrapping applied, a Latin phrase inside an
+    // RTL paragraph reads LEFT-TO-RIGHT (first char is leftmost).
+    function visualLTR(t, sentence, phrase, label) {
+      const wrapped = wrapWith(sentence, NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      const p = makeParagraph(wrapped, "rtl");
+      const first = phrase[0];
+      const last = phrase[phrase.length - 1];
+      // Use nth-occurrence to disambiguate common letters.
+      const idxFirst = sentence.indexOf(phrase);
+      const idxLast = idxFirst + phrase.length - 1;
+      // count occurrences of first-char up to idxFirst to pick the right one
+      let nFirst = 0, nLast = 0;
+      for (let i = 0; i < idxFirst; i++) if (sentence[i] === first) nFirst++;
+      for (let i = 0; i < idxLast; i++) if (sentence[i] === last) nLast++;
+      const xf = xOfNth(p, first, nFirst);
+      const xl = xOfNth(p, last, nLast);
+      t.assert(label + " — first char left of last char", xf < xl,
+        "first=" + first.charCodeAt(0).toString(16) + "@" + xf.toFixed(1) +
+        " last=" + last.charCodeAt(0).toString(16) + "@" + xl.toFixed(1));
+    }
+
+    suite("visual — pinned Latin phrases in RTL", (t) => {
+      visualLTR(t, "از Java, Spring استفاده می‌کنیم.", "Java, Spring", "Java, Spring");
+      visualLTR(t, "Java, Spring, Maven برای این پروژه.", "Java, Spring, Maven", "Java, Spring, Maven");
+      visualLTR(t, "پروتکل GET, POST را ببین.", "GET, POST", "GET, POST");
+      visualLTR(t, "نوع String, Integer.", "String, Integer", "String, Integer");
+      visualLTR(t, "نوع List<String>, Map<String, Integer> استفاده کن.", "List<String>, Map<String, Integer>", "List<String>, Map<String, Integer>");
+      visualLTR(t, "مقادیر key: value را بخوان.", "key: value", "key: value");
+      visualLTR(t, "پورت 127.0.0.1:8080 را بررسی.", "127.0.0.1:8080", "127.0.0.1:8080");
+      visualLTR(t, "فلگ‌های --force, --verbose بزن.", "--force, --verbose", "--force, --verbose");
+      visualLTR(t, "ایمیل user@example.com بفرست.", "user@example.com", "user@example.com");
+      visualLTR(t, "مسیر C:\\Temp را ببین.", "C:\\Temp", "C:\\Temp");
+      visualLTR(t, "مسیر /api/users را بگیر.", "/api/users", "/api/users");
+    });
+
+    // Reality check: which BiDi shapes the browser alone gets right,
+    // and which it does not. This suite pins the split so a future
+    // engine change is judged against reality, not intuition.
+    suite("browser BiDi alone — what works, what doesn't", (t) => {
+      // Simple 'Java, Spring' — N1 alone keeps the comma LTR.
+      const p1 = makeParagraph("از Java, Spring استفاده", "rtl");
+      t.assert("bare 'Java, Spring' — J left of g (browser handles it)",
+        xOf(p1, "J") < xOf(p1, "g"), "wrapping not needed for pure-letter/comma runs");
+
+      // 'List<String>' — < and > form a BiDi bracket pair (N0). In RTL
+      // context the pair takes the paragraph direction, splitting the
+      // Latin sub-runs. This is EXACTLY why we wrap: without a bdi the
+      // reader sees 'List' and 'String' in reversed visual order.
+      const p2 = document.createElement("p");
+      p2.setAttribute("dir", "rtl");
+      p2.textContent = "نوع List<String> کار می‌کند";
+      stage.innerHTML = ""; stage.appendChild(p2);
+      const xL = xOf(p2, "L"), xgt = xOf(p2, ">");
+      t.assert("bare 'List<String>' visually broken — wrapping required",
+        xL > xgt, "browser N0 breaks the bracket pair — wrapping fixes it");
+    });
+
+    // Copy safety: textContent of a wrapped paragraph equals the original.
+    suite("copy safety — wrapping keeps textContent", (t) => {
+      const cases = [
+        "از Java, Spring استفاده می‌کنیم.",
+        "نوع List<String>, Map<String, Integer> بررسی",
+        "فلگ‌های --force, --verbose بزن",
+        "پورت 127.0.0.1:8080 را بررسی کن",
+        "ایمیل user@example.com و admin@example.com",
+        "مسیر C:\\Temp, D:\\Project ببین",
+        "مسیر /api/users را بگیر"
+      ];
+      for (const s of cases) {
+        const wrapped = wrapWith(s, NEW_LATIN_RUN, NEW_NEEDS_ISO);
+        const p = makeParagraph(wrapped, "rtl");
+        t.eq("textContent for " + s.slice(0, 30) + "…", p.textContent, s);
+      }
+    });
+
+    // Teardown: removing bdi wrappers restores identical DOM text.
+    suite("teardown — removing <bdi> keeps text identical", (t) => {
+      const s = "نوع List<String>, Map<String, Integer> استفاده کن";
+      const wrapped = wrapWith(s, NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      const p = makeParagraph(wrapped, "rtl");
+      const bdis = p.querySelectorAll('bdi[data-iso="1"]');
+      t.assert("wrappers were inserted", bdis.length > 0);
+      // teardown: replace each bdi with its textContent
+      for (const b of Array.from(bdis)) {
+        b.replaceWith(document.createTextNode(b.textContent));
+      }
+      p.normalize();
+      t.eq("textContent after teardown", p.textContent, s);
+      t.eq("no bdi remains", p.querySelectorAll("bdi").length, 0);
+    });
+
+    // Streaming safety: incrementally growing a paragraph never breaks
+    // the wrapping (each stage's textContent equals its input).
+    suite("streaming safety — growing wrapped paragraph", (t) => {
+      const stages = [
+        "از",
+        "از Java",
+        "از Java,",
+        "از Java, Spring",
+        "از Java, Spring استفاده",
+        "از Java, Spring استفاده می‌کنیم."
+      ];
+      for (const stage of stages) {
+        const wrapped = wrapWith(stage, NEW_LATIN_RUN, NEW_NEEDS_ISO);
+        const p = makeParagraph(wrapped, "rtl");
+        t.eq("stage textContent: " + stage.slice(0, 24) + "…", p.textContent, stage);
+      }
+    });
+
+    // Don't over-isolate: each risky run gets ONE bdi, not one per word.
+    suite("no over-isolation — one bdi per semantic run", (t) => {
+      const s = "از Java, Spring, Maven استفاده می‌کنیم.";
+      const wrapped = wrapWith(s, NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      const p = makeParagraph(wrapped, "rtl");
+      const bdis = p.querySelectorAll("bdi");
+      t.eq("bdi count", bdis.length, 1);
+      t.eq("bdi text", bdis[0].textContent, "Java, Spring, Maven");
+    });
+
+    suite("quoted spans do not flip ownership", (t) => {
+      // Guillemet-quoted Latin inside Persian: still Persian sentence.
+      t.eq("«Java» به فارسی زبان جاوا",
+        RastAIEngine.directionOf("«Java» به فارسی زبان جاوا").dir, "rtl");
+      // Persian noun quoted mid English sentence: LTR (rule 5 tightening).
+      t.eq("Translation of «کتاب» is «book».",
+        RastAIEngine.directionOf("Translation of «کتاب» is «book».").dir, "ltr");
+    });
+
+    // Arrow-only runs must NOT be isolated so the browser can mirror
+    // them per Unicode bidi in RTL. If we wrap → in <bdi dir="ltr">
+    // the glyph freezes rightward and a Persian reader sees a flow
+    // arrow pointing away from the next step.
+    suite("arrow-only runs are NOT wrapped (browser mirrors them)", (t) => {
+      const cases = [
+        "یک عدد بگیر → بررسی کن زوج است → بده",
+        "مرحله ۱ → مرحله ۲",
+        "سمت چپ ← سمت راست",
+        "برو → و برگرد ← دوباره"
+      ];
+      for (const text of cases) {
+        const wrapped = wrapWith(text, NEW_LATIN_RUN, NEW_NEEDS_ISO);
+        t.assert("no <bdi> in '" + text.slice(0, 30) + "…'",
+          !/<bdi/.test(wrapped),
+          "got: " + wrapped);
+      }
+      // Sanity: an arrow next to a Latin token IS a mixed run, so the
+      // full run does still get isolated (arrow travels with the code).
+      const mixed = "بگیر → getClass() را صدا بزن";
+      const wrapped = wrapWith(mixed, NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      t.assert("Latin+arrow mix IS wrapped",
+        /<bdi[^>]*>[^<]*getClass\(\)[^<]*<\/bdi>/.test(wrapped),
+        "got: " + wrapped);
+    });
+
+    // ------- finish ---------------------------------------------------
+    summary.className = failed ? "fail" : "pass";
+    summary.textContent = (failed ? "FAIL — " : "OK — ") +
+      passed + "/" + assertions + " assertions passed" +
+      (failed ? " (" + failed + " failed)" : "");
+    document.title = (failed ? "FAIL " : "OK ") + passed + "/" + assertions;
+    window.__testResults = { passed, failed, assertions, failLog };
+  </script>
+</body>
+</html>

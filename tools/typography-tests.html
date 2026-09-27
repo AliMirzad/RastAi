@@ -1,0 +1,154 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>RastAI — typography and site classification</title>
+  <style>
+    body { font: 14px/1.5 -apple-system, Segoe UI, Roboto, sans-serif; margin: 24px; max-width: 900px; }
+    h1 { font-size: 18px; }
+    .suite { margin: 10px 0; border: 1px solid #ddd; border-radius: 6px; padding: 8px 12px; }
+    .suite h2 { font-size: 13px; margin: 0 0 6px; }
+    .row { padding: 2px 0; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; }
+    .ok { color: #0a7f2e; }
+    .fail { color: #b00020; font-weight: 600; }
+    #summary { padding: 8px 14px; border-radius: 6px; margin: 12px 0; font-size: 14px; }
+    #summary.pass { background: #e7f5ec; color: #0a7f2e; }
+    #summary.fail { background: #fdeceb; color: #b00020; }
+    .fixture { position: absolute; left: -9999px; top: 0; width: 900px; font-size: 16px; line-height: 1.5; }
+
+    /* Mirror of the shipping content.js typography rules under test. */
+    html.rastai-rtl-on [data-rastai-rtl="rtl"]:not(table){
+      direction:rtl!important;text-align:right!important;unicode-bidi:isolate!important;}
+    html.rastai-rtl-on:not([data-rastai-lh]) [data-rastai-rtl="rtl"] :is(h1,h2,h3,h4,h5,h6):not(pre):not(code),
+    html.rastai-rtl-on:not([data-rastai-lh]) :is(h1,h2,h3,h4,h5,h6)[data-rastai-rtl="rtl"]:not(pre):not(code){
+      line-height:1.45!important;}
+    html.rastai-rtl-on ul[data-rastai-rtl="rtl"], html.rastai-rtl-on ol[data-rastai-rtl="rtl"]{
+      padding-right:1.75em!important;padding-left:0!important;margin-right:0!important;}
+    html.rastai-rtl-on [data-rastai-rtl="rtl"] :is(ul,ol) :is(ul,ol){
+      padding-right:1.5em!important;padding-left:0!important;}
+    html.rastai-rtl-on blockquote[data-rastai-rtl="rtl"], html.rastai-rtl-on [data-rastai-rtl="rtl"] blockquote{
+      border-inline-start-style:solid!important;border-inline-start-width:3px!important;
+      border-left:0!important;
+      padding-inline-start:12px!important;padding-inline-end:0!important;
+      margin-inline-start:0!important;margin-inline-end:0!important;}
+    html.rastai-rtl-on table[data-rastai-rtl="rtl"] :is(th,td){text-align:start!important;}
+  </style>
+</head>
+<body>
+  <h1>RastAI — typography &amp; site classification</h1>
+  <div id="summary">running…</div>
+  <div id="results"></div>
+  <div id="stage" class="fixture"></div>
+
+  <script src="../sites.js"></script>
+  <script>
+    document.documentElement.classList.add("rastai-rtl-on");
+
+    const results = document.getElementById("results");
+    const summary = document.getElementById("summary");
+    const stage = document.getElementById("stage");
+    let passed = 0, failed = 0, assertions = 0;
+
+    function suite(name, fn) {
+      const div = document.createElement("div");
+      div.className = "suite";
+      div.innerHTML = "<h2>" + name + "</h2>";
+      results.appendChild(div);
+      const t = {
+        eq(label, got, want) {
+          assertions++;
+          const ok = got === want;
+          if (ok) passed++; else failed++;
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.textContent = (ok ? "✓ " : "✗ ") + label + "   want " + JSON.stringify(want) + " got " + JSON.stringify(got);
+          div.appendChild(row);
+        },
+        assert(label, cond, detail) {
+          assertions++;
+          const ok = !!cond;
+          if (ok) passed++; else failed++;
+          const row = document.createElement("div");
+          row.className = "row " + (ok ? "ok" : "fail");
+          row.textContent = (ok ? "✓ " : "✗ ") + label + (!ok && detail ? "   " + detail : "");
+          div.appendChild(row);
+        }
+      };
+      try { fn(t); } catch (e) { failed++; const row = document.createElement("div"); row.className = "row fail"; row.textContent = "✗ threw: " + e.message; div.appendChild(row); }
+    }
+
+    function mark(el) { el.setAttribute("dir","rtl"); el.setAttribute("data-rastai-rtl","rtl"); }
+    function put(html) { stage.innerHTML = html; }
+
+    suite("headings — RTL h1..h6 get looser line-height", (t) => {
+      for (const tag of ["h1","h2","h3","h4","h5","h6"]) {
+        put("<" + tag + ' data-rastai-rtl="rtl" dir="rtl">عنوان فارسی</' + tag + ">");
+        const el = stage.firstChild;
+        const lh = parseFloat(getComputedStyle(el).lineHeight);
+        const fs = parseFloat(getComputedStyle(el).fontSize);
+        const ratio = lh / fs;
+        t.assert(tag + " line-height≈1.45", Math.abs(ratio - 1.45) < 0.02,
+          "got " + ratio.toFixed(3));
+      }
+    });
+
+    suite("lists — RTL ul/ol indents from the right", (t) => {
+      put('<ul data-rastai-rtl="rtl" dir="rtl"><li>یک</li><li>دو</li></ul>');
+      const ul = stage.firstChild;
+      const pr = parseFloat(getComputedStyle(ul).paddingRight);
+      const pl = parseFloat(getComputedStyle(ul).paddingLeft);
+      t.assert("padding-right > 0", pr > 20, "pr=" + pr);
+      t.assert("padding-left == 0", pl === 0, "pl=" + pl);
+
+      // Nested list
+      put('<ul data-rastai-rtl="rtl" dir="rtl"><li>یک<ul><li>یک‌الف</li></ul></li></ul>');
+      const inner = stage.querySelector("ul ul");
+      const npr = parseFloat(getComputedStyle(inner).paddingRight);
+      t.assert("nested padding-right > 0", npr > 20, "npr=" + npr);
+    });
+
+    suite("blockquote — start-edge accent bar in RTL", (t) => {
+      put('<blockquote data-rastai-rtl="rtl" dir="rtl">نقل قول فارسی.</blockquote>');
+      const bq = stage.firstChild;
+      const cs = getComputedStyle(bq);
+      // In RTL, "inline-start" is the RIGHT side.
+      t.assert("border-right present (start edge)", parseFloat(cs.borderRightWidth) >= 3,
+        "borderRightWidth=" + cs.borderRightWidth);
+      t.assert("border-left removed", parseFloat(cs.borderLeftWidth) === 0,
+        "borderLeftWidth=" + cs.borderLeftWidth);
+    });
+
+    suite("table — RTL cells align to start", (t) => {
+      put('<table data-rastai-rtl="rtl" dir="rtl"><tbody><tr><th>سر</th><td>سلول</td></tr></tbody></table>');
+      const cells = stage.querySelectorAll("th, td");
+      for (const c of cells) {
+        const a = getComputedStyle(c).textAlign;
+        t.assert("cell text-align=" + a + " (start/right)",
+          a === "start" || a === "right", "align=" + a);
+      }
+    });
+
+    suite("sites.js — classification", (t) => {
+      t.eq("chatgpt.com",       RastAISites.statusFor("chatgpt.com"),       "supported");
+      t.eq("www.chatgpt.com",   RastAISites.statusFor("www.chatgpt.com"),   "supported");
+      t.eq("chat.openai.com",   RastAISites.statusFor("chat.openai.com"),   "supported");
+      t.eq("claude.ai",         RastAISites.statusFor("claude.ai"),         "supported");
+      t.eq("chat.deepseek.com", RastAISites.statusFor("chat.deepseek.com"), "supported");
+      t.eq("gemini.google.com", RastAISites.statusFor("gemini.google.com"), "partially-tested");
+      t.eq("perplexity.ai",     RastAISites.statusFor("perplexity.ai"),     "partially-tested");
+      t.eq("grok.com",          RastAISites.statusFor("grok.com"),          "partially-tested");
+      t.eq("uxpilot.ai",        RastAISites.statusFor("uxpilot.ai"),        "partially-tested");
+      t.eq("example.com",       RastAISites.statusFor("example.com"),       "unsupported");
+      t.eq("empty",             RastAISites.statusFor(""),                  "unsupported");
+      // Sub-domain fallback: any *.claude.ai should map to claude.ai.
+      t.eq("api.claude.ai",     RastAISites.statusFor("api.claude.ai"),     "supported");
+    });
+
+    summary.className = failed ? "fail" : "pass";
+    summary.textContent = (failed ? "FAIL — " : "OK — ") + passed + "/" + assertions +
+      " assertions passed" + (failed ? " (" + failed + " failed)" : "");
+    document.title = (failed ? "FAIL " : "OK ") + passed + "/" + assertions;
+    window.__testResults = { passed, failed, assertions };
+  </script>
+</body>
+</html>
