@@ -52,12 +52,10 @@ const zipName = "RastAI-v" + version + ".zip";
 const zipPath = path.join(outDir, zipName);
 if (fs.existsSync(zipPath)) fs.unlinkSync(zipPath);
 
-// PowerShell's Compress-Archive is available on every Windows 10+.
-// Falls back to /usr/bin/zip on POSIX so the same script works locally
-// and on CI.
-// Compress-Archive flattens directories when given a file list. Stage
-// into a temporary tree first so fonts/ and icons/ survive as
-// sub-directories inside the zip.
+// Stage into a temporary tree so fonts/ and icons/ keep their paths.
+// Windows ships bsdtar as tar.exe; its -a flag selects ZIP from the
+// destination extension. POSIX CI environments use the standard zip
+// command. This keeps the build independent of PowerShell modules.
 const stage = path.join(outDir, "_stage_v" + version);
 function rmrf(p) {
   if (!fs.existsSync(p)) return;
@@ -78,12 +76,19 @@ for (const rel of files) {
 
 const isWin = process.platform === "win32";
 if (isWin) {
-  // Compress-Archive zips the STAGE'S CONTENTS (via the trailing \*),
-  // so the archive root is the top-level extension folder.
+  // Prefer PowerShell when its archive module is available. Some lean
+  // Windows environments omit that module, so fall back to the bundled
+  // bsdtar implementation instead of making release builds machine-specific.
   const src = path.join(stage, "*").replace(/\\/g, "\\\\");
   const dst = zipPath.replace(/\\/g, "\\\\");
   const cmd = "Compress-Archive -Path '" + src + "' -DestinationPath '" + dst + "' -Force";
-  execFileSync("powershell.exe", ["-NoProfile", "-Command", cmd], { stdio: "inherit" });
+  try {
+    execFileSync("powershell.exe", ["-NoProfile", "-Command", cmd], { stdio: "pipe" });
+  } catch (_) {
+    console.warn("PowerShell archive support unavailable; using tar.exe");
+    execFileSync("tar.exe", ["-a", "-c", "-f", zipPath, "-C", stage, "."],
+      { stdio: "inherit" });
+  }
 } else {
   execFileSync("zip", ["-r", zipPath, ...files], { cwd: stage, stdio: "inherit" });
 }

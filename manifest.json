@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "RastAI",
-  "version": "1.42.5",
+  "version": "1.42.8",
   "description": "راست‌چین‌سازی هوشمند فارسی + فونت Vazirmatn برای چت‌بات‌های هوش مصنوعی — Smart RTL for AI chats (Persian, Arabic, Hebrew, Urdu)",
   "homepage_url": "https://github.com/AliMirzad/RastAi",
   "permissions": [

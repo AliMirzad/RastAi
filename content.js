@@ -896,16 +896,13 @@
     let anyIso = false;
     while ((m = LATIN_RUN.exec(text))) {
       const run = m[0];
-      const iso = NEEDS_ISO.test(run);
-      if (!iso) { continue; }                      // browser handles it fine
-      // Arrow-only runs (→ between Persian words, "بگیر → بررسی") are
-      // flow arrows. Browsers do NOT actually mirror U+2192 in RTL
-      // context — the Unicode Bidi_Mirrored property is honored only
-      // for brackets by most engines. So we tag arrow-only runs and
-      // the injected CSS flips them visually with transform:scaleX(-1)
-      // inside an RTL paragraph. Text content stays untouched (copy
-      // still yields "→"), only the rendered glyph is mirrored.
-      if (!HAS_LATIN.test(run)) {
+      const isArrow = !HAS_LATIN.test(run);
+
+      // Arrow-only run: tagged so the CSS can flip its glyph in RTL.
+      // Browsers do not apply Unicode Bidi_Mirrored to arrow
+      // codepoints, so we do it ourselves.
+      if (isArrow) {
+        if (!NEEDS_ISO.test(run)) continue;         // pure text arrow, no need
         if (m.index > lastIndex) {
           pieces.push({ text: text.slice(lastIndex, m.index), iso: false });
         }
@@ -914,6 +911,21 @@
         lastIndex = LATIN_RUN.lastIndex;
         continue;
       }
+
+      // Latin run: wrap only when the run itself contains BiDi-neutral
+      // punctuation the browser could split around (parens, angle
+      // brackets, commas, …). A plain Latin word or phrase without
+      // any of those chars is already ordered correctly by the
+      // browser's own bidi algorithm, so wrapping it would just be
+      // DOM churn.
+      //
+      // Trailing sentence punctuation (. , ; : ! ?) is deliberately
+      // LEFT OUTSIDE the bdi. In an RTL paragraph, a period after
+      // the last Latin word must land at the paragraph's visual
+      // LEFT edge (the line's semantic end for a Persian reader),
+      // not stay glued to the Latin word. v1.42.7 mistakenly pulled
+      // the period into the bdi; v1.42.8 reverts that.
+      if (!NEEDS_ISO.test(run)) continue;         // browser handles it fine
       if (m.index > lastIndex) {
         pieces.push({ text: text.slice(lastIndex, m.index), iso: false });
       }
@@ -953,8 +965,75 @@
     return true;
   }
 
+  // Regex matching a run of arrow characters (U+2190..U+21FF and the
+  // supplementary blocks). Used by the arrow-flip-in-code pass, which
+  // runs everywhere including inside <pre>/<code> — safe because it
+  // only inserts a bdi around a short arrow run and preserves every
+  // surrounding character (including whitespace and code semantics).
+  const ARROW_RUN = new RegExp("[" + ARROWS + "]+", "g");
+  const HAS_ARROW = new RegExp("[" + ARROWS + "]");
+
+  // For a paragraph marked rtl inside a code block, wrap arrow-only
+  // runs in <bdi data-rastai-iso="arrow"> so the CSS can flip them.
+  // Never touches Latin identifiers or any non-arrow text — that's
+  // wrapLatinInBdi's job, and it (correctly) skips code contexts.
+  function flipArrowsInAny(root) {
+    if (root.getAttribute(MARK) !== "rtl") return;
+    const rt = root.tagName;
+    if (rt === "UL" || rt === "OL" || rt === "TABLE") return;
+    let walker;
+    try {
+      walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
+    } catch (_) { return; }
+    const targets = [];
+    let node;
+    while ((node = walker.nextNode())) {
+      const parent = node.parentElement;
+      if (!parent) continue;
+      // Skip anything already inside one of our bdis.
+      if (parent.tagName === "BDI" && parent.hasAttribute(ISO_ATTR)) continue;
+      // Don't process text that belongs to a nested paragraph — it
+      // gets its own pass and would be double-wrapped.
+      if (parent.closest && parent.closest(SEL) !== root) continue;
+      if (!node.data || !HAS_ARROW.test(node.data)) continue;
+      targets.push(node);
+    }
+    for (let i = 0; i < targets.length; i++) {
+      const n = targets[i];
+      if (!n.isConnected) continue;
+      splitArrowsOnly(n, n.data);
+    }
+  }
+
+  function splitArrowsOnly(textNode, text) {
+    ARROW_RUN.lastIndex = 0;
+    const parent = textNode.parentNode;
+    if (!parent || !parent.isConnected) return;
+    const frag = document.createDocumentFragment();
+    let last = 0, m, anyArrow = false;
+    while ((m = ARROW_RUN.exec(text))) {
+      anyArrow = true;
+      if (m.index > last) {
+        frag.appendChild(document.createTextNode(text.slice(last, m.index)));
+      }
+      const b = document.createElement("bdi");
+      b.setAttribute(ISO_ATTR, "arrow");
+      b.textContent = m[0];
+      frag.appendChild(b);
+      last = ARROW_RUN.lastIndex;
+    }
+    if (!anyArrow) return;
+    if (last < text.length) {
+      frag.appendChild(document.createTextNode(text.slice(last)));
+    }
+    if (textNode.parentNode !== parent) return;
+    try { parent.replaceChild(frag, textNode); } catch (_) {}
+  }
+
   function wrapLatinInBdi(root) {
-    // Never restructure code. Highlighters own that DOM.
+    // Prose paragraphs only. Code contexts are handled by
+    // flipArrowsInAny above — which does NOT restructure Latin,
+    // only flips arrows inside code for a Persian reader.
     if (isCodey(root) || (root.closest && root.closest(WRAP_SKIP))) return;
     // A list or table holds no prose of its own; its items and cells are
     // visited separately.
@@ -1114,7 +1193,15 @@
       scheduleRevisit(el);
       return;
     }
-    if (st.wrap !== sig) { st.wrap = sig; wrapLatinInBdi(el); }
+    if (st.wrap !== sig) {
+      st.wrap = sig;
+      wrapLatinInBdi(el);
+      // Even in code contexts, flip arrows visually so Persian flow
+      // reads correctly. Both passes share the same st.wrap signature
+      // so we only re-do the work when the paragraph text has actually
+      // changed.
+      flipArrowsInAny(el);
+    }
     st.done = 1;
   }
 

@@ -35,9 +35,17 @@ console.log("extracting to " + stage);
 const isWin = process.platform === "win32";
 try {
   if (isWin) {
-    const cmd = "Expand-Archive -Path '" + zipPath.replace(/\\/g, "\\\\") +
-                "' -DestinationPath '" + stage.replace(/\\/g, "\\\\") + "' -Force";
-    execFileSync("powershell.exe", ["-NoProfile", "-Command", cmd], { stdio: "inherit" });
+    // Prefer PowerShell, with a tar.exe fallback for Windows installs
+    // where Microsoft.PowerShell.Archive is not available.
+    const src = zipPath.replace(/\\/g, "\\\\");
+    const dst = stage.replace(/\\/g, "\\\\");
+    const cmd = "Expand-Archive -Path '" + src + "' -DestinationPath '" + dst + "' -Force";
+    try {
+      execFileSync("powershell.exe", ["-NoProfile", "-Command", cmd], { stdio: "pipe" });
+    } catch (_) {
+      console.warn("PowerShell archive support unavailable; using tar.exe");
+      execFileSync("tar.exe", ["-x", "-f", zipPath, "-C", stage], { stdio: "inherit" });
+    }
   } else {
     execFileSync("unzip", ["-o", zipPath, "-d", stage], { stdio: "inherit" });
   }

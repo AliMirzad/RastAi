@@ -12,7 +12,10 @@
 
 <p align="center">
   <a href="https://github.com/AliMirzad/RastAi/releases">
-    <img src="https://img.shields.io/badge/version-1.42.5-22c55e" alt="Version 1.42.5">
+    <img src="https://img.shields.io/badge/version-1.42.8-22c55e" alt="Version 1.42.8">
+  </a>
+  <a href="https://github.com/AliMirzad/RastAi/actions/workflows/ci.yml">
+    <img src="https://github.com/AliMirzad/RastAi/actions/workflows/ci.yml/badge.svg" alt="CI">
   </a>
   <img src="https://img.shields.io/badge/Manifest-V3-4285F4" alt="Manifest V3">
   <a href="LICENSE">
@@ -69,6 +72,8 @@ RastAI یک افزونهٔ مرورگر برای نمایش درست متن‌ه
 
 1. آخرین نسخه را از صفحهٔ [Releases](https://github.com/AliMirzad/RastAi/releases)
    دریافت و از حالت فشرده خارج کنید.
+   در صورت نیاز می‌توانید صحت فایل را با مقدار منتشرشده در
+   `SHA256SUMS.txt` بررسی کنید.
 2. در Chrome یا مرورگرهای مبتنی بر Chromium وارد `chrome://extensions/` شوید.
 3. گزینهٔ **Developer mode** را فعال کنید.
 4. روی **Load unpacked** بزنید و پوشهٔ استخراج‌شده را انتخاب کنید.

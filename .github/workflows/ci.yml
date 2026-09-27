@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Test direction engine
+        run: |
+          node tools/accuracy.js
+          node tools/accuracy.js tools/holdout.json
+          node tools/accuracy.js tools/bidi-corpus.json
+
+      - name: Audit manifest and URL matching
+        run: |
+          node tools/audit.test.js
+          node tools/match.test.js
+
+      - name: Run browser tests
+        run: |
+          node tools/browser-tests.js
+          node tools/ui.test.js
+
+      - name: Build release archive
+        run: node tools/build-release.js
+
+      - name: Smoke-test release archive
+        run: node tools/smoke-release.js
+
+      - name: Upload verified archive
+        if: github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: RastAI-${{ github.sha }}
+          path: dist/*.zip
+          if-no-files-found: error
+          retention-days: 7

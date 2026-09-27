@@ -146,21 +146,32 @@
       "[A-Za-z0-9\\]})>])?|[" + ARROWS + "]+", "g");
     const NEW_NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/" + ARROWS + "]");
 
-    // Mirrors content.js's splitAndWrap. v1.42.5 behaviour:
-    //   - Latin+arrow mix         → <bdi data-iso="1">
-    //   - Arrow-only run          → <bdi data-iso="arrow"> (CSS flips it)
-    //   - Everything else         → plain text
+    // Mirrors content.js's splitAndWrap. v1.42.8 behaviour:
+    //   - Arrow-only run          → <bdi data-iso="arrow"> (CSS flips)
+    //   - Latin run with risky    → <bdi dir="ltr" data-iso="1">
+    //     neutrals (parens, <>, commas …)
+    //   - Everything else         → plain text (browser handles it)
+    // Trailing sentence punctuation is NOT pulled into the bdi — a
+    // period after the last Latin word must land at the paragraph's
+    // visual left edge in RTL, which is what BiDi does when the
+    // period stays outside the bdi.
     const HAS_LATIN = /[A-Za-z0-9_$]/;
     function wrapWith(text, RUN, ISO) {
       RUN.lastIndex = 0;
       const parts = [];
       let last = 0, m;
       while ((m = RUN.exec(text))) {
-        const iso = ISO.test(m[0]);
-        if (!iso) continue;
-        if (m.index > last) parts.push({t: text.slice(last, m.index), iso: false});
         const isArrow = !HAS_LATIN.test(m[0]);
-        parts.push({t: m[0], iso: true, arrow: isArrow});
+        if (isArrow) {
+          if (!ISO.test(m[0])) continue;
+          if (m.index > last) parts.push({t: text.slice(last, m.index), iso: false});
+          parts.push({t: m[0], iso: true, arrow: true});
+          last = RUN.lastIndex;
+          continue;
+        }
+        if (!ISO.test(m[0])) continue;
+        if (m.index > last) parts.push({t: text.slice(last, m.index), iso: false});
+        parts.push({t: m[0], iso: true, arrow: false});
         last = RUN.lastIndex;
       }
       if (last < text.length) parts.push({t: text.slice(last), iso: false});
@@ -382,6 +393,50 @@
       t.assert("Latin+arrow mix IS wrapped as data-iso=\"1\"",
         /<bdi[^>]*data-iso="1">[^<]*getClass\(\)[^<]*<\/bdi>/.test(wrapped),
         "got: " + wrapped);
+    });
+
+    // v1.42.8 — trailing sentence punctuation MUST stay OUTSIDE the
+    // bdi. In an RTL paragraph, that lets the period land on the
+    // paragraph's visual left edge (the semantic end of the line for
+    // a Persian reader). v1.42.7 briefly pulled the period into the
+    // bdi and that was wrong — v1.42.8 reverts.
+    suite("trailing punctuation stays OUTSIDE the Latin bdi (end-of-line)", (t) => {
+      // Plain Latin run followed by period: no wrap at all (Persian
+      // reader gets the period at the paragraph's left edge via
+      // native BiDi ordering).
+      const noWrap = wrapWith("یعنی همان Functional Interface.", NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      t.assert("plain 'Functional Interface.' — no bdi wrap",
+        !/<bdi/.test(noWrap),
+        "wrapped: " + noWrap);
+
+      // Latin run WITH risky neutrals (comma) still wraps, but the
+      // trailing period is NOT included.
+      const withComma = wrapWith("از Java, Spring استفاده.", NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      t.assert("Java, Spring wraps without trailing period",
+        /<bdi[^>]*data-iso="1">Java, Spring<\/bdi>/.test(withComma),
+        "wrapped: " + withComma);
+      t.assert("period stays outside the bdi",
+        !/Spring\.<\/bdi>/.test(withComma),
+        "wrapped: " + withComma);
+
+      // Reported bug fixture: "بودن از Functional Interface می‌آید،
+      // نه از خود Lambda." — the trailing period after "Lambda"
+      // must reach the paragraph's left edge, so "Lambda" is
+      // unwrapped (no risky neutrals) and the period stays a bare
+      // text node after it.
+      const reported = wrapWith(
+        "یعنی Generic بودن از Functional Interface می‌آید، نه از خود Lambda.",
+        NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      t.assert("'Lambda.' is not stuck to Lambda's bdi",
+        !/Lambda\.<\/bdi>/.test(reported) &&
+        !/<bdi[^>]*>Lambda\./.test(reported),
+        "wrapped: " + reported);
+
+      // Persian-only sentence with a period: no wrap ever.
+      const pure = wrapWith("این یک جمله است.", NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      t.assert("Persian-only sentence unchanged",
+        !/<bdi/.test(pure),
+        "wrapped: " + pure);
     });
 
     // ------- finish ---------------------------------------------------

@@ -31,6 +31,12 @@
       <p id="pmix">این متن درباره List&lt;String&gt;, Map&lt;String, Integer&gt; است</p>
       <p id="pcode">مثال کد: <code id="codegen">Gen2&lt;Integer&gt;</code> را ببین.</p>
       <p id="pmixov">این توضیح Java, Spring را دستی چپ‌چین کرده بودم.</p>
+      <!-- v1.42.6: arrows inside a Persian prose paragraph, and
+           inside a Persian-content "Plain text" pre block. The mark
+           pipeline must wrap both cases so the CSS can flip glyphs. -->
+      <p id="parr">یک عدد بگیر → بررسی کن → بده.</p>
+      <pre id="prearr">Interface → می‌گوید «چه کاری باید باشد»
+Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
     </div>
     <form><div contenteditable="true" id="composer"><p id="cp">سلام، این متن پیام من است</p></div></form>
   </main>
@@ -331,6 +337,46 @@
       const ov2 = Object.keys(S.local.overrides || {}).length;
       S.assert(ov2 === startCount, "override count did not return to baseline (" + ov1 + " -> " + ov2 + ")");
       S.assert(p.getAttribute("data-rastai-rtl") === "rtl", "engine did not re-decide RTL after reset");
+    });
+
+    // ---- v1.42.6 arrow flip invariants ----
+    // Arrows in Persian-context prose and inside "Plain text" code
+    // blocks must be wrapped in <bdi data-rastai-iso="arrow"> so the
+    // injected CSS can visually flip them (Unicode's Bidi_Mirrored
+    // property is not applied to arrow codepoints by browsers).
+
+    await S.test("arrow between Persian words wraps in bdi[iso=\"arrow\"] (prose)", async () => {
+      const p = $("parr");
+      // Text gets normalized on wrap; wait for the wrap pass.
+      await S.wait(200);
+      const bdis = p.querySelectorAll('bdi[data-rastai-iso="arrow"]');
+      S.assert(bdis.length >= 2,
+        "expected >= 2 arrow-bdis in prose, got " + bdis.length);
+      // Every arrow-bdi's text is only arrow characters.
+      for (const b of bdis) {
+        S.assert(/^[←-⇿]+$/.test(b.textContent),
+          "arrow-bdi contains non-arrow: " + JSON.stringify(b.textContent));
+      }
+      // Full textContent must still round-trip cleanly (copy-safety).
+      S.assert(p.textContent.indexOf("→") >= 0,
+        "arrow round-trip broke: " + JSON.stringify(p.textContent));
+    });
+
+    await S.test("arrows inside a Persian <pre> code block also wrap (v1.42.6)", async () => {
+      const pre = $("prearr");
+      await S.wait(200);
+      const bdis = pre.querySelectorAll('bdi[data-rastai-iso="arrow"]');
+      S.assert(bdis.length >= 2,
+        "expected >= 2 arrow-bdis in code, got " + bdis.length);
+      // No Latin-isolation bdi inside code (that would rewrite
+      // "Interface"/"Lambda" and break code semantics).
+      const latinBdis = pre.querySelectorAll('bdi[data-rastai-iso="1"]');
+      S.assert(latinBdis.length === 0,
+        "flipArrowsInAny must not wrap Latin runs, got " + latinBdis.length);
+      // textContent still has both Interface and Lambda intact.
+      S.assert(pre.textContent.indexOf("Interface") >= 0 &&
+               pre.textContent.indexOf("Lambda") >= 0,
+        "code identifiers lost: " + JSON.stringify(pre.textContent));
     });
 
     // ---- v1.41 performance invariants ----
