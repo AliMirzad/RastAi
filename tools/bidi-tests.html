@@ -146,9 +146,10 @@
       "[A-Za-z0-9\\]})>])?|[" + ARROWS + "]+", "g");
     const NEW_NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/" + ARROWS + "]");
 
-    // Mirrors content.js's splitAndWrap, including the v1.42.4
-    // arrow-only skip: a run with no Latin letter/digit is left
-    // unwrapped so Unicode's bidi mirroring flips arrows inside RTL.
+    // Mirrors content.js's splitAndWrap. v1.42.5 behaviour:
+    //   - Latin+arrow mix         → <bdi data-iso="1">
+    //   - Arrow-only run          → <bdi data-iso="arrow"> (CSS flips it)
+    //   - Everything else         → plain text
     const HAS_LATIN = /[A-Za-z0-9_$]/;
     function wrapWith(text, RUN, ISO) {
       RUN.lastIndex = 0;
@@ -157,15 +158,20 @@
       while ((m = RUN.exec(text))) {
         const iso = ISO.test(m[0]);
         if (!iso) continue;
-        if (!HAS_LATIN.test(m[0])) continue;    // arrow-only: let browser mirror
         if (m.index > last) parts.push({t: text.slice(last, m.index), iso: false});
-        parts.push({t: m[0], iso: true});
+        const isArrow = !HAS_LATIN.test(m[0]);
+        parts.push({t: m[0], iso: true, arrow: isArrow});
         last = RUN.lastIndex;
       }
       if (last < text.length) parts.push({t: text.slice(last), iso: false});
       if (!parts.some(p => p.iso)) return text.replace(/&/g, "&amp;").replace(/</g, "&lt;");
-      return parts.map(p => p.iso ? '<bdi dir="ltr" data-iso="1">' + p.t.replace(/&/g,"&amp;").replace(/</g,"&lt;") + '</bdi>'
-                                  : p.t.replace(/&/g,"&amp;").replace(/</g,"&lt;")).join("");
+      return parts.map(p => {
+        const esc = p.t.replace(/&/g,"&amp;").replace(/</g,"&lt;");
+        if (!p.iso) return esc;
+        const kind = p.arrow ? "arrow" : "1";
+        const dirAttr = p.arrow ? "" : ' dir="ltr"';
+        return '<bdi' + dirAttr + ' data-iso="' + kind + '">' + esc + '</bdi>';
+      }).join("");
     }
 
     // Utility: does the new regex capture the full expected run?
@@ -346,11 +352,12 @@
         RastAIEngine.directionOf("Translation of «کتاب» is «book».").dir, "ltr");
     });
 
-    // Arrow-only runs must NOT be isolated so the browser can mirror
-    // them per Unicode bidi in RTL. If we wrap → in <bdi dir="ltr">
-    // the glyph freezes rightward and a Persian reader sees a flow
-    // arrow pointing away from the next step.
-    suite("arrow-only runs are NOT wrapped (browser mirrors them)", (t) => {
+    // Arrow-only runs get a special bdi[data-iso="arrow"] so the CSS
+    // can flip the glyph inside an RTL paragraph — Unicode's
+    // Bidi_Mirrored property is not applied to arrows by browsers, so
+    // we have to do it ourselves with transform: scaleX(-1).
+    // The Latin+arrow mix path is unchanged.
+    suite("arrow handling: arrow-only tagged, mixed still isolated", (t) => {
       const cases = [
         "یک عدد بگیر → بررسی کن زوج است → بده",
         "مرحله ۱ → مرحله ۲",
@@ -359,16 +366,21 @@
       ];
       for (const text of cases) {
         const wrapped = wrapWith(text, NEW_LATIN_RUN, NEW_NEEDS_ISO);
-        t.assert("no <bdi> in '" + text.slice(0, 30) + "…'",
-          !/<bdi/.test(wrapped),
+        // Every arrow-only match becomes a bdi with data-iso="arrow";
+        // there must be NO bdi with data-iso="1" (that's the Latin path).
+        t.assert("arrow bdi present in '" + text.slice(0, 30) + "…'",
+          /<bdi\s+data-iso="arrow">/.test(wrapped),
+          "got: " + wrapped);
+        t.assert("no data-iso=\"1\" bdi in '" + text.slice(0, 30) + "…'",
+          !/data-iso="1"/.test(wrapped),
           "got: " + wrapped);
       }
-      // Sanity: an arrow next to a Latin token IS a mixed run, so the
-      // full run does still get isolated (arrow travels with the code).
+      // Sanity: an arrow next to a Latin token IS a mixed run and
+      // gets the data-iso="1" path (arrow travels with the code).
       const mixed = "بگیر → getClass() را صدا بزن";
       const wrapped = wrapWith(mixed, NEW_LATIN_RUN, NEW_NEEDS_ISO);
-      t.assert("Latin+arrow mix IS wrapped",
-        /<bdi[^>]*>[^<]*getClass\(\)[^<]*<\/bdi>/.test(wrapped),
+      t.assert("Latin+arrow mix IS wrapped as data-iso=\"1\"",
+        /<bdi[^>]*data-iso="1">[^<]*getClass\(\)[^<]*<\/bdi>/.test(wrapped),
         "got: " + wrapped);
     });
 

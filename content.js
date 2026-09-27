@@ -254,8 +254,23 @@
     "direction:ltr!important;text-align:left!important;" +
     "unicode-bidi:isolate!important;}\n" +
 
-    "html." + CLASS_RTL + " bdi[" + ISO_ATTR + "]{" +
+    "html." + CLASS_RTL + " bdi[" + ISO_ATTR + "=\"1\"]{" +
     "direction:ltr!important;unicode-bidi:isolate!important;" +
+    "display:inline;font:inherit;color:inherit;" +
+    "background:transparent;padding:0;margin:0;border:0;}\n" +
+
+    // Arrow-only bdi: rendered as an inline-block, glyph mirrored with
+    // transform:scaleX(-1). Browsers do not apply Unicode Bidi_Mirrored
+    // to arrow codepoints, so we do it visually. Only fires inside an
+    // RTL-marked paragraph — LTR paragraphs leave the arrow as-is.
+    "html." + CLASS_RTL + " [" + MARK + "=\"rtl\"] bdi[" + ISO_ATTR + "=\"arrow\"]{" +
+    "display:inline-block!important;transform:scaleX(-1)!important;" +
+    "direction:ltr!important;unicode-bidi:isolate!important;" +
+    "font:inherit;color:inherit;background:transparent;" +
+    "padding:0;margin:0;border:0;}\n" +
+    // In an LTR paragraph we still want to strip the default <bdi>
+    // behavior but NOT mirror.
+    "html." + CLASS_RTL + " [" + MARK + "=\"ltr\"] bdi[" + ISO_ATTR + "=\"arrow\"]{" +
     "display:inline;font:inherit;color:inherit;" +
     "background:transparent;padding:0;margin:0;border:0;}\n" +
 
@@ -883,15 +898,22 @@
       const run = m[0];
       const iso = NEEDS_ISO.test(run);
       if (!iso) { continue; }                      // browser handles it fine
-      // Arrow-only runs (→ between Persian words, "بگیر → بررسی") must
-      // NOT be isolated: <bdi dir="ltr"> would fix them to a rightward
-      // glyph, but a Persian reader wants a flow arrow that points in
-      // the reading direction. Unicode marks these arrows as bidi-
-      // mirrored, so the browser flips them automatically inside RTL
-      // — as long as we leave them unwrapped. If a run has any
-      // Latin letter or digit, it's a real technical token and gets
-      // isolated as before.
-      if (!HAS_LATIN.test(run)) { continue; }
+      // Arrow-only runs (→ between Persian words, "بگیر → بررسی") are
+      // flow arrows. Browsers do NOT actually mirror U+2192 in RTL
+      // context — the Unicode Bidi_Mirrored property is honored only
+      // for brackets by most engines. So we tag arrow-only runs and
+      // the injected CSS flips them visually with transform:scaleX(-1)
+      // inside an RTL paragraph. Text content stays untouched (copy
+      // still yields "→"), only the rendered glyph is mirrored.
+      if (!HAS_LATIN.test(run)) {
+        if (m.index > lastIndex) {
+          pieces.push({ text: text.slice(lastIndex, m.index), iso: false });
+        }
+        pieces.push({ text: run, iso: true, arrow: true });
+        anyIso = true;
+        lastIndex = LATIN_RUN.lastIndex;
+        continue;
+      }
       if (m.index > lastIndex) {
         pieces.push({ text: text.slice(lastIndex, m.index), iso: false });
       }
@@ -913,7 +935,7 @@
       if (!p.text) continue;
       if (p.iso) {
         const b = document.createElement("bdi");
-        b.setAttribute(ISO_ATTR, "1");
+        b.setAttribute(ISO_ATTR, p.arrow ? "arrow" : "1");
         b.textContent = p.text;
         frag.appendChild(b);
       } else {
@@ -958,7 +980,7 @@
           (parent.closest(WRAP_SKIP) || parent.closest(SEL) !== root));
       }
       if (memoSkip) continue;
-      if (parent.tagName === "BDI" && parent.getAttribute(ISO_ATTR) === "1") continue;
+      if (parent.tagName === "BDI" && parent.hasAttribute(ISO_ATTR)) continue;
       const data = node.data;
       if (!data) continue;
       OLD_ISOLATE_CHARS.lastIndex = 0;
@@ -1181,7 +1203,7 @@
 
   // One selector walk answers both questions at once: if our own <bdi> is
   // nearer than the paragraph, the mutation came from us and is ignored.
-  const HOST_SEL = SEL + ",bdi[" + ISO_ATTR + "=\"1\"]";
+  const HOST_SEL = SEL + ",bdi[" + ISO_ATTR + "]";
 
   // During a stream the same element mutates dozens of times a second, so
   // a single memo slot removes almost every one of these selector walks.
@@ -1241,7 +1263,7 @@
           const n = added[j];
           if (n.nodeType === 1) {
             if (n.id === BTN_ID) continue;
-            if (n.tagName === "BDI" && n.getAttribute(ISO_ATTR) === "1") continue;
+            if (n.tagName === "BDI" && n.hasAttribute(ISO_ATTR)) continue;
             enqueue(n);
           }
         }
