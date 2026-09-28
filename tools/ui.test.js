@@ -33,7 +33,7 @@ if (!chrome) {
 }
 
 const dir = path.join(__dirname, "ui");
-const pages = ["content.html", "popup.html?case=fresh", "popup.html?case=saved"];
+const pages = ["content.html", "bidi-regressions.html", "popup.html?case=fresh", "popup.html?case=saved"];
 
 let pass = 0, fail = 0;
 for (const page of pages) {
@@ -44,7 +44,7 @@ for (const page of pages) {
     const ciFlags = process.env.CI ? ["--no-sandbox", "--disable-dev-shm-usage"] : [];
     dom = execFileSync(chrome, [
       "--headless=new", "--disable-gpu", "--no-first-run", "--no-default-browser-check",
-      "--allow-file-access-from-files", "--virtual-time-budget=20000",
+      "--allow-file-access-from-files", "--virtual-time-budget=40000",
       "--user-data-dir=" + path.join(require("os").tmpdir(), "rastai-rtl-ui-test"),
       ...ciFlags, "--dump-dom", url
     ], { encoding: "utf8", timeout: 60000, stdio: ["ignore", "pipe", "pipe"] });
@@ -53,7 +53,7 @@ for (const page of pages) {
     if (e && e.stderr) console.error(String(e.stderr).trim());
   }
 
-  const m = dom.match(/<pre id="out">([\s\S]*?)<\/pre>/);
+  const m = dom.match(/<pre id="out"[^>]*>([\s\S]*?)<\/pre>/);
   console.log(page);
   if (!m) { console.log("  FAIL  page produced no results"); fail++; continue; }
   const txt = m[1].replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&amp;/g, "&");

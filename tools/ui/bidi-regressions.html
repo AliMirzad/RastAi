@@ -1,0 +1,165 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Mixed prose layout regressions</title>
+  <style>
+    body { width: 800px; font: 16px/1.8 Arial, sans-serif; }
+    h2 { font-size: 22px; }
+    pre { font: 14px/1.6 monospace; white-space: pre-wrap; }
+    code.language-plaintext { display: block; direction: ltr; text-align: left; unicode-bidi: isolate; }
+  </style>
+  <script src="stub.js"></script>
+</head>
+<body>
+<main>
+  <p id="plain" dir="auto">این می‌شود Method Reference. کتاب هم Method Reference را راهی برای اشاره به یک متد بدون اجرای فوری آن معرفی می‌کند. مثل Lambda، Method Reference هم به یک Functional Interface سازگار نیاز دارد.</p>
+  <p id="native" dir="auto"><span>این می‌شود </span><bdi>Method Reference.</bdi><span> کتاب هم </span><bdi>Method Reference</bdi><span> را راهی برای اشاره به یک متد بدون اجرای فوری آن معرفی می‌کند. مثل </span><bdi>Lambda، Method Reference</bdi><span> هم به یک </span><bdi>Functional Interface</bdi><span> سازگار نیاز دارد.</span></p>
+  <h2 id="heading" dir="auto">10) حالت مهم‌تر: Instance Method روی هر Object از یک Type</h2>
+  <h2 id="native-heading" dir="auto"><bdi>10)</bdi><span> حالت مهم‌تر: </span><bdi>Instance Method</bdi><span> روی هر </span><bdi>Object</bdi><span> از یک </span><bdi>Type</bdi></h2>
+  <pre id="explanation"><code class="language-plaintext">this
+→ مربوط به enclosing object است
+→ Lambda this مستقل ندارد</code></pre>
+  <pre id="program"><code class="language-java">class Example {
+  // توضیح فارسی برای این متد
+  public static void run(String[] args) { int count = instanceValue++; }
+}</code></pre>
+  <pre id="unlabelled">this
+→ مربوط به enclosing object است
+→ Lambda this مستقل ندارد</pre>
+  <p id="nested" dir="auto">Use <span dir="rtl">List&lt;String&gt; and @user</span> safely.</p>
+  <p id="technical">این توضیح مربوط به List&lt;String&gt;, Map&lt;String, Integer&gt; و user@example.com است.</p>
+  <p id="sentence-tail" dir="auto"><span>و بعد سه حالت مهمش را جدا می‌کنیم: static method، instance method و instance method روی هر object از یک </span><bdi>type.</bdi></p>
+</main>
+<script>
+(async function () {
+  const S = __stub;
+  const $ = id => document.getElementById(id);
+  const originals = new Map(Array.from(document.querySelectorAll('main > *'), el => [el, el.textContent]));
+  const nativeNodes = Array.from(document.querySelectorAll('#native bdi, #native-heading bdi'), el => [el, el.parentNode]);
+  const codeNodes = [$('explanation').querySelector('code').firstChild, $('program').querySelector('code').firstChild];
+  function rect(el, index) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (index >= node.length) { index -= node.length; continue; }
+      const r = document.createRange(); r.setStart(node, index); r.setEnd(node, index + 1);
+      return r.getBoundingClientRect();
+    }
+    throw Error('Missing character');
+  }
+  function at(el, word, offset = 0) { return rect(el, el.textContent.indexOf(word) + offset); }
+  function assertWord(el, word) {
+    for (let i = 1; i < word.length; i++) {
+      const a = at(el, word, i - 1), b = at(el, word, i);
+      S.assert(a.top === b.top && a.left < b.left, word + ' was reversed or split');
+    }
+  }
+  async function settle() { await S.wait(6500); }
+  function assertList(p) {
+    p.style.width = '800px';
+    const start = p.textContent.indexOf('Lambda');
+    const next = p.textContent.indexOf('Method Reference', start);
+    const a = rect(p, start), b = rect(p, next);
+    S.assert(a.top === b.top && a.left > b.left, 'Persian list terms are in English order');
+    const comma = rect(p, start + 'Lambda'.length);
+    S.assert(comma.left < a.left && comma.left > b.left, 'Persian comma is on the wrong side');
+    assertWord(p, 'Lambda');
+  }
+  function assertHeading(h) {
+    const number = at(h, '10)'), bracket = at(h, '10)', 2);
+    S.assert(number.left > bracket.left, 'heading index was treated as an English phrase');
+    const terms = ['حالت', 'Instance Method', 'روی', 'Object', 'از', 'Type'];
+    for (let i = 1; i < terms.length; i++) {
+      const a = at(h, terms[i - 1]), b = at(h, terms[i]);
+      S.assert(a.top === b.top && a.left > b.left, 'heading order lost at ' + terms[i]);
+    }
+    assertWord(h, 'Instance Method'); assertWord(h, 'Object'); assertWord(h, 'Type');
+  }
+  function assertTail() {
+    const bdi = $('sentence-tail').querySelector('bdi:not([data-rastai-iso])');
+    S.assert(at(bdi, '.').left < at(bdi, 'type').left, 'final period no longer ends the RTL sentence');
+  }
+  try {
+    S.sync = { rtlMode: 'smart', fontEnabled: false, siteOff: {} };
+    await S.loadScript('../../engine.js');
+    await S.loadScript('../../content.js');
+    await settle();
+    await S.test('Persian comma separates Latin terms in plain text', () => assertList($('plain')));
+    await S.test('Persian comma separates Latin terms inside a native bdi', () => assertList($('native')));
+    await S.test('numbered mixed heading retains RTL index and Latin identifiers', () => assertHeading($('heading')));
+    await S.test('native bdi heading index follows Persian enumeration direction', () => assertHeading($('native-heading')));
+    await S.test('plain-text explanations with identifier-led lines use RTL, not code majority', () => {
+      const pre = $('explanation');
+      S.assert(pre.getAttribute('data-rastai-rtl') === 'rtl', 'plain-text explanation is LTR');
+      const code = pre.querySelector('code');
+      S.assert(getComputedStyle(code).direction === 'rtl' && getComputedStyle(code).textAlign === 'right',
+        'site-owned code CSS defeated the explanation direction');
+      S.assert(!code.querySelector('bdi[data-rastai-iso="1"]'), 'plain-text identifiers were restructured');
+      S.assert(code.querySelectorAll('bdi[data-rastai-iso="arrow"]').length === 2, 'explanation arrows were not mirrored');
+      S.assert(at(pre, 'مربوط').left > at(pre, 'enclosing object').left, 'explanation line order is wrong');
+    });
+    await S.test('real code and unlabelled pre retain existing structural direction', () => {
+      const pre = $('program');
+      S.assert(pre.getAttribute('data-rastai-rtl') === 'ltr', 'real program direction changed');
+      S.assert(pre.querySelector('code').firstChild === codeNodes[1] && !pre.querySelector('bdi'), 'syntax highlighter DOM changed');
+      S.assert($('unlabelled').getAttribute('data-rastai-rtl') === 'ltr', 'unlabelled code direction changed');
+    });
+    await S.test('LTR English root still isolates a nested RTL technical span', () => {
+      S.assert(!$('nested').hasAttribute('data-rastai-rtl'), 'English prose was marked');
+      S.assert($('nested').querySelector('span bdi[data-rastai-iso]'), 'nested RTL technical syntax was skipped');
+    });
+    await S.test('generics, ASCII technical lists and email preserve LTR tokens', () => {
+      const p = $('technical');
+      assertWord(p, 'List<String>'); assertWord(p, 'Map<String, Integer>'); assertWord(p, 'user@example.com');
+    });
+    await S.test('type-period sentence-end correction still works', assertTail);
+    await S.test('native nodes and copied text are preserved', () => {
+      for (const [el, parent] of nativeNodes) S.assert(el.isConnected && el.parentNode === parent, 'native bdi container detached');
+      for (const [el, text] of originals) S.assert(el.textContent === text, el.id + ' copied text changed');
+    });
+    await S.test('same-text native list replacement receives fresh isolation', async () => {
+      const p = $('native');
+      const old = Array.from(p.querySelectorAll('bdi:not([data-rastai-iso])')).find(b => b.textContent.includes('Lambda'));
+      const next = document.createElement('bdi'); next.textContent = old.textContent;
+      old.replaceWith(next); await settle(); assertList(p);
+      // Restore the original site-owned container for the teardown test.
+      next.replaceWith(old); await settle();
+    });
+    await S.test('inline emphasis does not hide a Persian list delimiter', async () => {
+      const p = document.createElement('p');
+      p.innerHTML = 'مثل <strong>Lambda</strong>، <em>Method Reference</em> هم';
+      $('plain').after(p); await settle();
+      try { assertList(p); assertWord(p, 'Method Reference'); }
+      finally { p.remove(); }
+    });
+    await S.test('Persian list surgery waits for streaming to stop', async () => {
+      const stop = document.createElement('button');
+      stop.dataset.testid = 'stop-generating'; stop.textContent = 'Stop';
+      document.body.append(stop);
+      const p = document.createElement('p');
+      p.innerHTML = 'مثل <bdi>Lambda، Method Reference</bdi> هم';
+      const bdi = p.querySelector('bdi'), node = bdi.firstChild, text = p.textContent;
+      $('plain').after(p);
+      try {
+        await S.wait(1000);
+        S.assert(bdi.firstChild === node && !bdi.querySelector('[data-rastai-iso]'), 'live renderer text was restructured');
+        stop.remove();
+        for (let i = 0; i < 80 && bdi.querySelectorAll('[data-rastai-iso]').length !== 2; i++) await S.wait(50);
+        assertList(p);
+        S.assert(p.textContent === text, 'streaming changed copied text');
+      } finally { stop.remove(); p.remove(); }
+    });
+    await S.test('site off/on restores mixed prose and removes only owned corrections', async () => {
+      S.send({ type: 'rastai-toggle', siteOn: false }); await S.wait(150);
+      S.assert(!document.querySelector('[data-rastai-punct], bdi[data-rastai-iso], [data-rastai-rtl]'), 'owned state remained while off');
+      for (const [el, text] of originals) S.assert(el.textContent === text, el.id + ' off changed copied text');
+      S.send({ type: 'rastai-toggle', siteOn: true }); await settle();
+      assertList($('plain')); assertList($('native')); assertHeading($('heading')); assertHeading($('native-heading')); assertTail();
+    });
+    S.finish();
+  } catch (e) { S.fail(e); }
+})();
+</script>
+</body>
+</html>

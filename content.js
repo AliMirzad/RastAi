@@ -48,6 +48,7 @@
   const CLASS_FONT = "rastai-font-on";
   const MARK = "data-rastai-rtl";
   const ISO_ATTR = "data-rastai-iso";
+  const PUNCT_ATTR = "data-rastai-punct";
   const BTN_ID = "rastai-flip-btn";
   const CLASS_INPUT = "rastai-input-on";
   const CLASS_DEBUG = "rastai-debug-on";
@@ -85,6 +86,10 @@
   // Subtrees we never restructure. Highlighters rebuild these constantly
   // and their layout depends on exact text-node boundaries.
   const WRAP_SKIP = "pre, code, " + INPUT_SKIP;
+  const NATIVE_PUNCT_SKIP = "pre,code,kbd,samp,var,math,svg," + INPUT_SKIP;
+  const PLAIN_TEXT_CODE_SEL =
+    'code.language-plaintext,code.language-text,code.language-txt,' +
+    'code[data-language="plaintext"],code[data-language="text"],code[data-language="txt"]';
 
   // Site markers that mean "an answer is being generated right now".
   // Deliberately loose: these are a fast hint, not the only guard. If a
@@ -100,12 +105,13 @@
     'button[aria-label*="stop"]';
 
   // ---- tuning knobs -------------------------------------------------
-  const STREAM_QUIET_MS = 450;  // element must be textually still this long
+  const STREAM_QUIET_MS = 550;  // element must be textually still this long
   const FRAME_BUDGET_MS = 8;    // work budget for one drain slice
-  const MIN_BATCH = 24;         // always process at least this many nodes
-  const STREAM_CACHE_MS = 150;  // how long the streaming probe is cached
-  const HOT_MIN_MS = 120;       // min gap between visits to one element
+  const MIN_BATCH = 1;          // guarantee progress, then respect the slice budget
+  const STREAM_CACHE_MS = 400;  // how long the streaming probe is cached
+  const HOT_MIN_MS = 220;       // min gap between visits to one element
   const FREEZE_LEN = 240;       // chars after which a direction is settled
+  const RESCAN_DEBOUNCE_MS = 220;   // min gap between whole-document sweeps
 
   let mode = "smart";
 
@@ -185,6 +191,14 @@
     "direction:ltr!important;text-align:left!important;" +
     "unicode-bidi:isolate!important;}\n" +
 
+    // A native <bdi> containing "type." defaults to LTR and traps the
+    // sentence's period on that side. Eligible plain-prose isolates get
+    // an RTL base direction without replacing any site-owned text nodes.
+    "html." + CLASS_RTL + " bdi[" + PUNCT_ATTR + "=\"rtl\"]" +
+    ":not([dir=\"ltr\"]):not([" + ISO_ATTR + "]):not([" + MARK + "])" +
+    ":not(:is(" + NATIVE_PUNCT_SKIP + ") *){" +
+    "direction:rtl!important;unicode-bidi:isolate!important;}\n" +
+
     // A table takes direction ONLY. `direction` on the table element is
     // what orders its columns — without it a Persian table keeps its
     // columns running left to right while every cell inside is
@@ -253,6 +267,12 @@
     "html." + CLASS_RTL + " [" + MARK + "=\"ltr\"] code:not(pre code):not([" + MARK + "]){" +
     "direction:ltr!important;text-align:left!important;" +
     "unicode-bidi:isolate!important;}\n" +
+
+    // A plain-text explanation must follow its owning pre even when the
+    // site's highlighter CSS defaults the inner code to LTR. Programming
+    // language blocks and unmarked English plain text are unaffected.
+    "html." + CLASS_RTL + " pre[" + MARK + "] :is(" + PLAIN_TEXT_CODE_SEL + "){" +
+    "direction:inherit!important;text-align:inherit!important;unicode-bidi:normal!important;}\n" +
 
     "html." + CLASS_RTL + " bdi[" + ISO_ATTR + "=\"1\"]{" +
     "direction:ltr!important;unicode-bidi:isolate!important;" +
@@ -404,6 +424,7 @@
   let observing = false;
 
   const queue = [];
+  let queueHead = 0;            // consume without shifting the remaining queue
   const queued = new Set();
   let scheduled = false;
 
@@ -479,7 +500,8 @@
   // count because <> is a BiDi bracket pair (N0) that gets flipped in
   // RTL context; @ and \\ and / count because they are neutrals that
   // BiDi treats as ambiguous inside a Persian frame.
-  const NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/" + ARROWS + "]");
+  const NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/\\u060C\\u061B" + ARROWS + "]");
+  const PERSIAN_LIST_DELIMITER = /[\u060C\u061B]/;
 
   const HAS_WRAPPABLE = new RegExp("[A-Za-z" + ARROWS + "]");
   // A run without any of these is arrow/punctuation only — the browser
@@ -668,6 +690,9 @@
   let streamCacheAt = -1e9;
   let streamCacheVal = false;
   let streamSince = 0;
+  let streamTreeVersion = 0;
+  let streamProbeVersion = -1;
+  let streamHits = null;
 
   // True while the site says an answer is being generated. Cached briefly
   // because this runs on every queued element.
@@ -724,7 +749,14 @@
     if (isPageBusy(t)) { streamCacheVal = true; return true; }
     let v = false;
     try {
-      const hits = document.querySelectorAll(STREAM_MARKERS);
+      // Text updates cannot add a stop button. Reuse the candidate list
+      // until elements or marker attributes change, including at idle.
+      // Visibility is still checked live so a hidden button never sticks.
+      if (streamProbeVersion !== streamTreeVersion || streamHits === null) {
+        streamHits = document.querySelectorAll(STREAM_MARKERS);
+        streamProbeVersion = streamTreeVersion;
+      }
+      const hits = streamHits;
       for (let i = 0; i < hits.length; i++) {
         const n = hits[i];
         // A stop button that is still in the DOM but not rendered (some
@@ -843,6 +875,23 @@
     return t === "PRE" || t === "CODE";
   }
 
+  // Explicitly labelled plain text can be an explanation, not a program.
+  // Judge its prose lines independently: an identifier-only first line
+  // ("this") must not turn two Persian explanation lines into English.
+  // Unlabelled pre blocks and actual programming languages keep the
+  // existing conservative codeDirection decision.
+  function plainTextDirection(el, text) {
+    if (el.tagName !== "PRE" || !el.querySelector(PLAIN_TEXT_CODE_SEL)) return RastAIEngine.codeDirection(text);
+    const lines = text.split(/\r?\n/);
+    let rtl = 0, ltr = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const dir = RastAIEngine.directionOf(lines[i]).dir;
+      if (dir === "rtl") rtl++;
+      else if (dir === "ltr") ltr++;
+    }
+    return rtl > ltr ? "rtl" : ltr ? "ltr" : null;
+  }
+
   // Direction only — never restructures children, so this is safe to run
   // on a paragraph that is still streaming.
   function applyDirection(el, text) {
@@ -859,7 +908,7 @@
     if (mode === "auto") {
       dir = null;
     } else if (isCodey(el)) {
-      dir = RastAIEngine.codeDirection(text);
+      dir = plainTextDirection(el, text);
       if (debug && dir) {
         try { el.setAttribute(SRC_ATTR, "Code"); el.removeAttribute(RULE_ATTR); } catch (_) {}
       }
@@ -885,7 +934,85 @@
 
   // ------------------------- bdi wrapping -------------------------
 
-  function splitAndWrap(textNode, text) {
+  // Simple Latin phrases with sentence punctuation or Persian list
+  // delimiters, plus a leading prose index, follow the prose base.
+  // URLs, operators and code-like syntax keep their native isolation.
+  const NATIVE_PUNCT_WORD = /^[A-Za-z][A-Za-z0-9 .\t-]*$/;
+  const NATIVE_PUNCT_CHAR = /[.,:;!?\u060C\u061B\u061F\u2026]/;
+  const NATIVE_PERSIAN_LIST = /^[A-Za-z][A-Za-z0-9 .\t\u060C\u061B-]*$/;
+  const PROSE_INDEX = /^[0-9]+\)$/;
+  const NATIVE_PUNCT_SEL =
+    "bdi:not([" + ISO_ATTR + "]):not([" + MARK + "]),bdi[" + PUNCT_ATTR + "]";
+
+  function hasNativePunctuation(text) {
+    const value = text.trim();
+    let end = value.length;
+    // A separate suffix scan is linear even for thousands of periods
+    // followed by an invalid character; overlapping regex runs are not.
+    while (end > 0 && NATIVE_PUNCT_CHAR.test(value.charAt(end - 1))) end--;
+    return end < value.length && NATIVE_PUNCT_WORD.test(value.slice(0, end));
+  }
+
+  function isLeadingProseIndex(bdi, root, text) {
+    if (!PROSE_INDEX.test(text.trim())) return false;
+    for (let node = bdi; node && node !== root; node = node.parentNode) {
+      for (let prev = node.previousSibling; prev; prev = prev.previousSibling) {
+        if (/\S/.test(prev.textContent || "")) return false;
+      }
+    }
+    return true;
+  }
+
+  function syncNativePunctuation(root) {
+    const rt = root.tagName;
+    if (rt === "UL" || rt === "OL" || rt === "TABLE") return;
+    const rtl = root.getAttribute(MARK) === "rtl";
+    // Non-RTL paragraphs only need to clean up an existing correction.
+    // Our own technical isolates are not candidates for this pass.
+    const bdis = root.querySelectorAll(rtl ? NATIVE_PUNCT_SEL : "bdi[" + PUNCT_ATTR + "]");
+    for (let i = 0; i < bdis.length; i++) {
+      const bdi = bdis[i];
+      const protectedContext = bdi.hasAttribute(ISO_ATTR) || bdi.hasAttribute(MARK) ||
+        (bdi.hasAttribute("dir") && bdi.getAttribute("dir") !== "auto") ||
+        !!bdi.closest(NATIVE_PUNCT_SKIP);
+      if (protectedContext) {
+        if (bdi.hasAttribute(PUNCT_ATTR)) bdi.removeAttribute(PUNCT_ATTR);
+        continue;
+      }
+      // A nested paragraph owns its own direction and marker pass.
+      if (bdi.closest(SEL) !== root) continue;
+      const text = bdi.textContent || "";
+      const eligible = rtl && (hasNativePunctuation(text) ||
+        (PERSIAN_LIST_DELIMITER.test(text) && NATIVE_PERSIAN_LIST.test(text.trim())) ||
+        isLeadingProseIndex(bdi, root, text));
+      if (eligible) {
+        if (bdi.getAttribute(PUNCT_ATTR) !== "rtl") {
+          bdi.setAttribute(PUNCT_ATTR, "rtl");
+        }
+      } else if (bdi.hasAttribute(PUNCT_ATTR)) {
+        bdi.removeAttribute(PUNCT_ATTR);
+      }
+    }
+  }
+
+  function touchesPersianList(textNode, text, index, step, root) {
+    while (index >= 0 && index < text.length && /[ \t]/.test(text.charAt(index))) index += step;
+    if (index >= 0 && index < text.length) return PERSIAN_LIST_DELIMITER.test(text.charAt(index));
+    // Inline emphasis can put the delimiter in a neighbouring text node.
+    // Stay inside this prose owner and inspect only the nearest character.
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    walker.currentNode = textNode;
+    let node;
+    while ((node = step < 0 ? walker.previousNode() : walker.nextNode())) {
+      const value = node.data;
+      let offset = step < 0 ? value.length - 1 : 0;
+      while (offset >= 0 && offset < value.length && /[ \t]/.test(value.charAt(offset))) offset += step;
+      if (offset >= 0 && offset < value.length) return PERSIAN_LIST_DELIMITER.test(value.charAt(offset));
+    }
+    return false;
+  }
+
+  function splitAndWrap(textNode, text, root, hasPersianList) {
     if (!text) return false;
     if (!HAS_WRAPPABLE.test(text)) return false;
 
@@ -897,6 +1024,10 @@
     while ((m = LATIN_RUN.exec(text))) {
       const run = m[0];
       const isArrow = !HAS_LATIN.test(run);
+
+      // A leading prose index is read in the paragraph's direction. An
+      // LTR isolate would put the closing bracket on the wrong side.
+      if (PROSE_INDEX.test(run) && !/\S/.test(text.slice(0, m.index))) continue;
 
       // Arrow-only run: tagged so the CSS can flip its glyph in RTL.
       // Browsers do not apply Unicode Bidi_Mirrored to arrow
@@ -912,12 +1043,12 @@
         continue;
       }
 
-      // Latin run: wrap only when the run itself contains BiDi-neutral
+      // Latin run: wrap when the run itself contains BiDi-neutral
       // punctuation the browser could split around (parens, angle
       // brackets, commas, …). A plain Latin word or phrase without
-      // any of those chars is already ordered correctly by the
-      // browser's own bidi algorithm, so wrapping it would just be
-      // DOM churn.
+      // any of those chars normally needs no wrapper. One exception is
+      // a Persian list: isolate its terms separately so the Persian
+      // delimiter doesn't join them into one left-to-right sequence.
       //
       // Trailing sentence punctuation (. , ; : ! ?) is deliberately
       // LEFT OUTSIDE the bdi. In an RTL paragraph, a period after
@@ -925,7 +1056,10 @@
       // LEFT edge (the line's semantic end for a Persian reader),
       // not stay glued to the Latin word. v1.42.7 mistakenly pulled
       // the period into the bdi; v1.42.8 reverts that.
-      if (!NEEDS_ISO.test(run)) continue;         // browser handles it fine
+      const listTerm = hasPersianList &&
+        (touchesPersianList(textNode, text, m.index - 1, -1, root) ||
+         touchesPersianList(textNode, text, LATIN_RUN.lastIndex, 1, root));
+      if (!NEEDS_ISO.test(run) && !listTerm) continue;
       if (m.index > lastIndex) {
         pieces.push({ text: text.slice(lastIndex, m.index), iso: false });
       }
@@ -1030,7 +1164,7 @@
     try { parent.replaceChild(frag, textNode); } catch (_) {}
   }
 
-  function wrapLatinInBdi(root) {
+  function wrapLatinInBdi(root, text) {
     // Prose paragraphs only. Code contexts are handled by
     // flipArrowsInAny above — which does NOT restructure Latin,
     // only flips arrows inside code for a Persian reader.
@@ -1040,14 +1174,36 @@
     const rt = root.tagName;
     if (rt === "UL" || rt === "OL" || rt === "TABLE") return;
 
+    const mark = root.getAttribute(MARK);
+    const wrapping = mark !== "ltr";
+    const hasPersianList = PERSIAN_LIST_DELIMITER.test(text);
+    let ltrProse = false;
+    OLD_ISOLATE_CHARS.lastIndex = 0;
+    const hasLegacy = OLD_ISOLATE_CHARS.test(text);
+    OLD_ISOLATE_CHARS.lastIndex = 0;
+    if (!hasLegacy && (!wrapping || !NEEDS_ISO.test(text) || !HAS_WRAPPABLE.test(text))) return;
+    // Only potentially risky, unmarked English prose needs this read.
+    // dir=auto alone is not proof: CSS can override it, and arrow-only
+    // text has no strong character and can inherit an RTL base.
+    if (wrapping && mark === null && /[A-Za-z]/.test(text) && !RastAIEngine.hasAnyPersian(text)) {
+      try { ltrProse = getComputedStyle(root).direction === "ltr"; } catch (_) {}
+      if (ltrProse && !root.firstElementChild && !hasLegacy) return;
+    }
+
     let walker;
     try {
       walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, null);
     } catch (_) { return; }
 
     const targets = [];
-    let node, memoPar = null, memoSkip = false;
+    let node, memoPar = null, memoSkip = false, memoWrap = wrapping;
     while ((node = walker.nextNode())) {
+      const data = node.data;
+      if (!data) continue;
+      OLD_ISOLATE_CHARS.lastIndex = 0;
+      const hasOld = OLD_ISOLATE_CHARS.test(data);
+      OLD_ISOLATE_CHARS.lastIndex = 0;
+      if (!hasOld && (!HAS_WRAPPABLE.test(data) || (!hasPersianList && !NEEDS_ISO.test(data)))) continue;
       const parent = node.parentElement;
       if (!parent) continue;
       if (parent !== memoPar) {
@@ -1057,19 +1213,18 @@
         // a <ul> inside a <li> is walked three times.
         memoSkip = !!(parent.closest &&
           (parent.closest(WRAP_SKIP) || parent.closest(SEL) !== root));
+        memoWrap = wrapping;
+        // An LTR paragraph can still contain a site-owned RTL span.
+        // Resolve only the risky owned text parents, not every child.
+        if (!memoSkip && ltrProse) {
+          try { memoWrap = getComputedStyle(parent).direction !== "ltr"; } catch (_) {}
+        }
       }
       if (memoSkip) continue;
       if (parent.tagName === "BDI" && parent.hasAttribute(ISO_ATTR)) continue;
-      const data = node.data;
-      if (!data) continue;
-      OLD_ISOLATE_CHARS.lastIndex = 0;
-      const hasOld = OLD_ISOLATE_CHARS.test(data);
-      OLD_ISOLATE_CHARS.lastIndex = 0;
-      if (!hasOld && !HAS_WRAPPABLE.test(data)) continue;
-      targets.push({ node: node, hasOld: hasOld });
+      if (!hasOld && !memoWrap) continue;
+      targets.push({ node: node, hasOld: hasOld, wrap: memoWrap });
     }
-
-    const wrapping = root.getAttribute(MARK) !== "ltr";
 
     for (let i = 0; i < targets.length; i++) {
       const node = targets[i].node;
@@ -1079,7 +1234,7 @@
       if (hasOld) text = text.replace(OLD_ISOLATE_CHARS, "");
       // In an LTR paragraph Latin needs no isolate — only strip legacy
       // control characters and leave the DOM alone.
-      if (wrapping && splitAndWrap(node, text)) continue;
+      if (targets[i].wrap && splitAndWrap(node, text, root, hasPersianList)) continue;
       if (hasOld) { try { node.data = text; } catch (_) {} }
     }
   }
@@ -1102,6 +1257,7 @@
   function flushRevisit() {
     revisitTimer = 0;
     if (revisit.size === 0) return;
+    if (scrolling) { armRevisit(); return; }
     if (isPageStreaming(now())) { armRevisit(); return; }
     const list = [];
     revisit.forEach(function (n) { list.push(n); });
@@ -1136,6 +1292,7 @@
       st.skip = (el.closest && el.closest(INPUT_SKIP)) ? 1 : 0;
     }
     if (st.skip === 1) {
+      syncNativePunctuation(el);
       // Inside the prompt box: never touch the content, only the
       // direction of this one paragraph.
       applyInputDir(el);
@@ -1160,6 +1317,7 @@
     // Persian character (mark === null) keeps being evaluated, so nothing
     // sits un-flipped while it is being written.
     if (st.mark && st.len >= FREEZE_LEN && isPageStreaming(t)) {
+      syncNativePunctuation(el);
       scheduleRevisit(el);
       return;
     }
@@ -1185,6 +1343,9 @@
     }
 
     if (st.dir !== sig) { st.dir = sig; st.mark = applyDirection(el, text); }
+    // Attribute-only work is safe while streaming, and must also run
+    // when the page replaces a native bdi with identical text.
+    syncNativePunctuation(el);
 
     // Structural work waits for calm. This is the fix for the collapsing
     // answer: while tokens are still arriving we touch nothing but the
@@ -1195,12 +1356,12 @@
     }
     if (st.wrap !== sig) {
       st.wrap = sig;
-      wrapLatinInBdi(el);
+      wrapLatinInBdi(el, text);
       // Even in code contexts, flip arrows visually so Persian flow
       // reads correctly. Both passes share the same st.wrap signature
       // so we only re-do the work when the paragraph text has actually
       // changed.
-      flipArrowsInAny(el);
+      if (HAS_ARROW.test(text)) flipArrowsInAny(el);
     }
     st.done = 1;
   }
@@ -1216,19 +1377,23 @@
     if (!root.isConnected) return;
     if (wasFlat) { markOne(root, t); return; }
     if (root.matches && root.matches(SEL)) markOne(root, t);
+    if (!root.firstElementChild) return;
     const list = root.querySelectorAll ? root.querySelectorAll(SEL) : null;
     if (!list || !list.length) return;
-    // A big subtree is broken into individually queued elements so one
-    // drain slice can never monopolise the main thread.
-    if (list.length > 60) {
-      for (let i = 0; i < list.length; i++) {
-        const st = stateMap.get(list[i]);
-        if (st !== undefined && st.done === 1 && st.ep === epoch) continue;
-        enqueue(list[i], true);
-      }
-      return;
+    // Every paragraph is its own budgeted unit, even in small subtrees.
+    // A queue entry must never hide sixty synchronous paragraph passes.
+    //
+    // Walk from the END: on a chat page the most-recently-added messages
+    // are at the bottom of the document. Enqueueing them first means the
+    // user's visible content settles before the drain slice is spent on
+    // scrolled-away scrollback. On a 500-message chat this is the
+    // difference between the latest answer flipping in <100ms and having
+    // to wait several seconds for older messages to be walked first.
+    for (let i = list.length - 1; i >= 0; i--) {
+      const st = stateMap.get(list[i]);
+      if (st !== undefined && st.done === 1 && st.ep === epoch) continue;
+      enqueue(list[i], true);
     }
-    for (let i = 0; i < list.length; i++) markOne(list[i], t);
   }
 
   /*
@@ -1247,29 +1412,65 @@
    */
   function drain(deadline) {
     scheduled = false;
+    // Yield to scroll. The scroll-idle timer will call schedule() again
+    // once the user's gesture ends, so no work is lost — it is just
+    // moved out of the frames the browser needs for compositing.
+    if (scrolling) return;
     const start = now();
     const hasDeadline = deadline && typeof deadline.timeRemaining === "function";
     let processed = 0;
     // One clock read per slice, not per element: a slice is at most
     // FRAME_BUDGET_MS long, which is well inside the tolerance of every
     // timestamp comparison downstream.
-    while (queue.length) {
+    while (queueHead < queue.length) {
       if (processed >= MIN_BATCH) {
         if (now() - start > FRAME_BUDGET_MS) break;
         if (hasDeadline && !deadline.didTimeout && deadline.timeRemaining() <= 1) break;
       }
-      const n = queue.shift();
+      const n = queue[queueHead];
+      queue[queueHead++] = null;  // release detached nodes immediately
       queued.delete(n);
       processNode(n, start);
       processed++;
     }
-    if (queue.length) schedule();
+    if (queueHead === queue.length) {
+      queue.length = 0;
+      queueHead = 0;
+    } else {
+      // Bound consumed slots during a sustained stream without a shift
+      // (and an O(queue length) copy) for every single paragraph.
+      if (queueHead >= 1024) { queue.splice(0, queueHead); queueHead = 0; }
+      schedule();
+    }
   }
 
   function schedule() {
     if (scheduled) return;
     scheduled = true;
     rIC(drain, { timeout: 300 });
+  }
+
+  // While the user is actively scrolling, main-thread paragraph work is
+  // stealing frame time from the compositor and every drain slice adds
+  // perceived scroll jank. So the drain pauses on the first scroll event
+  // and resumes ~180 ms after the last one — the same idle window
+  // browsers use for their own scroll-end signal. On a long chat this
+  // is what turns a laggy scroll into a smooth one.
+  let scrolling = 0;
+  let scrollIdleTimer = 0;
+
+  function onScrollIdle() {
+    scrollIdleTimer = 0;
+    scrolling = 0;
+    if (queueHead < queue.length) schedule();
+    if (revisit.size) armRevisit();
+  }
+
+  function onScroll() {
+    hideFlipBtn();
+    scrolling = 1;
+    if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
+    scrollIdleTimer = setTimeout(onScrollIdle, 180);
   }
 
   // Elements queued by a subtree expansion: their descendants were queued
@@ -1297,7 +1498,7 @@
   let hostMemoEl = null;
   let hostMemoRes = null;
 
-  function enqueueHost(node, streaming) {
+  function enqueueHost(node, streaming, shapeChanged, t) {
     if (!node) return;
     const el = node.nodeType === 1 ? node : node.parentElement;
     if (!el || !el.closest) return;
@@ -1313,7 +1514,16 @@
     }
     if (!host) return;
     const st = stateMap.get(host);
-    if (st !== undefined) st.done = 0;
+    if (st !== undefined) {
+      st.done = 0;
+      if (shapeChanged) {
+        // A renderer can replace native isolates with identical text.
+        // A text signature alone must not skip the new unprocessed DOM.
+        // Treat the replacement as hot even when its characters match.
+        st.wrap = -1;
+        st.hot = t;
+      }
+    }
     // A paragraph that is frozen for the duration of the stream would
     // only be queued, scheduled, drained and then skipped. Going straight
     // on the deferred list instead removes the entire round trip — which,
@@ -1340,35 +1550,87 @@
    */
   function onMutations(muts) {
     const t = now();
-    noteMutationBatch(t);
+    let contentChanged = false;
+    let treeChanged = false;
+    for (let i = 0; i < muts.length; i++) {
+      const m = muts[i];
+      if (m.type === "characterData") contentChanged = true;
+      else if (m.type === "attributes") {
+        // Most accessible-label updates are unrelated UI activity.
+        // Only a current or previously cached marker can change this list.
+        if (streamHits === null || m.target.matches(STREAM_MARKERS) ||
+            Array.prototype.indexOf.call(streamHits, m.target) !== -1) treeChanged = true;
+      }
+      else if (m.type === "childList") {
+        contentChanged = true;
+        // Replacing only a text node cannot change marker candidates.
+        for (let j = 0; !treeChanged && j < m.addedNodes.length; j++) {
+          if (m.addedNodes[j].nodeType === 1) treeChanged = true;
+        }
+        for (let j = 0; !treeChanged && j < m.removedNodes.length; j++) {
+          if (m.removedNodes[j].nodeType === 1) treeChanged = true;
+        }
+      }
+    }
+    if (!contentChanged && !treeChanged) return;
+    // Accessible labels can update frequently on otherwise quiet pages.
+    // They invalidate marker candidates, not the textual activity meter.
+    if (contentChanged) noteMutationBatch(t);
+    else if (treeChanged) domVersion++;
+    if (treeChanged) streamTreeVersion++;
     const streaming = isPageStreaming(t);
+    const addedRoots = new Set();
     for (let i = 0; i < muts.length; i++) {
       const m = muts[i];
       if (m.type === "childList") {
         const added = m.addedNodes;
+        let shapeChanged = false;
         for (let j = 0; j < added.length; j++) {
           const n = added[j];
           if (n.nodeType === 1) {
             if (n.id === BTN_ID) continue;
             if (n.tagName === "BDI" && n.hasAttribute(ISO_ATTR)) continue;
-            enqueue(n);
+            shapeChanged = true;
+            // Text-only spans, syntax tokens and native bdis have no
+            // paragraph descendants. Their host is handled below.
+            if (!n.firstElementChild && !n.matches(SEL)) continue;
+            addedRoots.add(n);
           }
+        }
+        for (let j = 0; !shapeChanged && j < m.removedNodes.length; j++) {
+          if (m.removedNodes[j].nodeType === 1) shapeChanged = true;
         }
         // The host paragraph itself changed shape, so its direction has
         // to be reconsidered even when the added node is an element.
-        enqueueHost(m.target, streaming);
+        enqueueHost(m.target, streaming, shapeChanged, t);
       } else if (m.type === "characterData") {
         enqueueHost(m.target, streaming);
       }
     }
+    addedRoots.forEach(function (n) {
+      // A single renderer commit can add both a container and several
+      // descendants. Expand only its outermost added subtree.
+      let parent = n.parentElement;
+      while (parent && !addedRoots.has(parent)) parent = parent.parentElement;
+      if (!parent) enqueue(n);
+    });
   }
 
   function startObserver() {
     if (observing || !document.body) return;
     observing = true;
     observer = new MutationObserver(onMutations);
+    // Attribute observation deliberately excludes `data-testid` and
+    // `aria-label`. Both fire on almost every hover, focus and
+    // virtualization tick on modern chat sites, and neither actually
+    // announces a stream start on any of the sites we support: stop
+    // buttons appear and disappear via childList mutations, which the
+    // observer already catches. Removing them cuts main-thread wake-ups
+    // by an order of magnitude on ChatGPT/Claude at rest.
     observer.observe(document.body, {
-      childList: true, subtree: true, characterData: true
+      childList: true, subtree: true, characterData: true,
+      attributes: true,
+      attributeFilter: ["data-is-streaming", "data-streaming", "data-message-streaming"]
     });
     enqueue(document.body);
   }
@@ -1387,16 +1649,40 @@
   // nothing new to find, so the sweep is skipped outright.
   let sweptVersion = -1;
   let sweptEpoch = -1;
+  let lastRescanAt = -1e9;
+  let rescanDebounceTimer = 0;
 
-  function rescan() {
+  function rescanNow() {
     if (!running || !document.body) return;
     if (domVersion === sweptVersion && epoch === sweptEpoch) return;
     sweptVersion = domVersion;
     sweptEpoch = epoch;
+    lastRescanAt = now();
     hostMemoEl = null;      // never hold a detached element across a sweep
     hostMemoRes = null;
     sweepEditables();
     enqueue(document.body);
+  }
+
+  // A long chat has visibilitychange, URL poll, stream-end, priming sweeps
+  // and mode changes all firing rescan within a few hundred ms. Each
+  // rescan is a querySelectorAll over the whole document. Debouncing them
+  // means one sweep does the work of many. The pending timer is reused if
+  // it already exists, so bursts collapse to a single tail-end sweep.
+  function rescan() {
+    if (!running || !document.body) return;
+    const t = now();
+    const since = t - lastRescanAt;
+    if (since >= RESCAN_DEBOUNCE_MS) {
+      if (rescanDebounceTimer) { clearTimeout(rescanDebounceTimer); rescanDebounceTimer = 0; }
+      rescanNow();
+      return;
+    }
+    if (rescanDebounceTimer) return;
+    rescanDebounceTimer = setTimeout(function () {
+      rescanDebounceTimer = 0;
+      rescanNow();
+    }, RESCAN_DEBOUNCE_MS - since);
   }
 
   // Safety net for slow / late-hydrating app shells: a handful of sweeps
@@ -1605,6 +1891,8 @@
   }
 
   function unwrapAll() {
+    const punct = document.querySelectorAll("bdi[" + PUNCT_ATTR + "]");
+    for (let i = 0; i < punct.length; i++) punct[i].removeAttribute(PUNCT_ATTR);
     let list;
     try { list = document.querySelectorAll("bdi[" + ISO_ATTR + "]"); } catch (_) { return; }
     for (let i = 0; i < list.length; i++) {
@@ -1625,13 +1913,19 @@
     if (observer) { try { observer.disconnect(); } catch (_) {} observer = null; }
     observing = false;
     queue.length = 0;
+    queueHead = 0;
     queued.clear();
     flat.clear();
     revisit.clear();
     if (revisitTimer) { clearTimeout(revisitTimer); revisitTimer = 0; }
+    if (scrollIdleTimer) { clearTimeout(scrollIdleTimer); scrollIdleTimer = 0; }
+    scrolling = 0;
     scheduled = false;
     hostMemoEl = null;
     hostMemoRes = null;
+    streamHits = null;
+    streamProbeVersion = -1;
+    streamCacheAt = -1e9;
 
     applyDebug(false);
     clearInputDirs();
@@ -1907,18 +2201,68 @@
   // ------- Wire everything up -------
 
   document.addEventListener("selectionchange", onSelectionChange, true);
-  window.addEventListener("scroll", hideFlipBtn, true);
+  // Passive scroll listener: Chrome can then keep scrolling on the
+  // compositor thread instead of blocking on main-thread JS. On a long
+  // chat this is the single biggest source of scroll jank a content
+  // script can introduce — a non-passive listener anywhere on the page
+  // forces every scroll gesture through the main thread even when the
+  // handler is a two-line function like ours.
+  window.addEventListener("scroll", onScroll, { capture: true, passive: true });
   document.addEventListener("copy", onCopy, true);
 
-  // ChatGPT quirk (v1.42.2 CSS only): kill the focus outline on
-  // <main class*="MainContentSurface"> so it no longer reads as a
-  // black frame around the chat. An earlier attempt also blurred
-  // that element on focusin so the arrow key would fall through to
-  // page scroll, but blurring <main> during a click cancels the
-  // browser's text selection (broken in v1.42.2, fixed in v1.42.3
-  // by removing the blur). The frame is the main annoyance; if
-  // arrow keys land on <main> and don't scroll, click elsewhere or
-  // use PgUp/PgDn.
+  // ChatGPT quirk: <main class*="MainContentSurface"> is focusable but
+  // is NOT the scroll container, so once focus lands on it the arrow /
+  // Page / Space / Home / End keys are swallowed and page scrolling
+  // stops working. The CSS above hides its focus outline (the ugly
+  // frame around the chat); this handler restores keyboard scrolling.
+  //
+  // History: v1.42.2 also blurred main on focusin. That fixed keyboard
+  // scrolling but cancelled the browser's text selection when the user
+  // clicked into the chat (v1.42.3 removed the blur). We can have both:
+  // blur only when the focus was NOT caused by a recent pointer event.
+  // A click's focusin follows the mousedown by well under 400 ms, so a
+  // short pointer-recency window separates the two cases without any
+  // handler on main itself.
+  let lastPointerAt = -1e9;
+  function notePointer() { lastPointerAt = now(); }
+  document.addEventListener("mousedown", notePointer, true);
+  document.addEventListener("pointerdown", notePointer, true);
+  document.addEventListener("touchstart", notePointer, { capture: true, passive: true });
+
+  function isChatGPTMain(el) {
+    if (!el || el.tagName !== "MAIN") return false;
+    const cls = el.className;
+    return typeof cls === "string" && cls.indexOf("MainContentSurface") !== -1;
+  }
+
+  document.addEventListener("focusin", function (e) {
+    if (!running) return;
+    const t = e.target;
+    if (!isChatGPTMain(t)) return;
+    // Recent click → user is selecting text or interacting. Leave focus
+    // alone so their selection is not cancelled.
+    if (now() - lastPointerAt < 400) return;
+    try { t.blur(); } catch (_) {}
+  }, true);
+
+  // Safety net: if focus somehow survived the focusin filter (a framework
+  // re-focus, a programmatic call), release main the moment the user
+  // presses a scroll key. Blurring during the keydown itself lets that
+  // very keypress fall through to the browser's default scroll handler,
+  // and text selection is never in play for these keys.
+  const SCROLL_KEYS = { ArrowUp:1, ArrowDown:1, ArrowLeft:1, ArrowRight:1,
+    PageUp:1, PageDown:1, Home:1, End:1, " ":1, Spacebar:1 };
+
+  document.addEventListener("keydown", function (e) {
+    if (!running) return;
+    if (!SCROLL_KEYS[e.key]) return;
+    // Skip if the user is typing in a real input — those keys mean
+    // "move caret" there, not "scroll page".
+    const a = document.activeElement;
+    if (!a) return;
+    if (!isChatGPTMain(a)) return;
+    try { a.blur(); } catch (_) {}
+  }, true);
 
   // A tab that was hidden gets no idle callbacks, so re-prime on return.
   document.addEventListener("visibilitychange", function () {
@@ -1934,17 +2278,17 @@
   let lastHref = location.href;
   let wasStreaming = false;
   setInterval(function () {
-    if (!running || document.hidden) return;
+    if (!running || document.hidden || scrolling) return;
     if (location.href !== lastHref) {
       lastHref = location.href;
       rescan();
-      setTimeout(rescan, 500);
-      setTimeout(rescan, 1500);
+      setTimeout(rescan, 700);
+      setTimeout(rescan, 2000);
     }
     const s = isPageStreaming(now());
-    if (wasStreaming && !s) { rescan(); setTimeout(rescan, 400); }
+    if (wasStreaming && !s) { rescan(); setTimeout(rescan, 500); }
     wasStreaming = s;
-  }, 500);
+  }, 1000);
 
   loadOverrides(function () {
   chrome.storage.sync.get(

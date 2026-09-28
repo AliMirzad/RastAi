@@ -24,11 +24,15 @@
       </ul>
       <pre id="pre"><code>const x = 1;</code></pre>
       <p id="en">This is a plain English paragraph with no Persian.</p>
+      <p id="en-tech" dir="auto"><span>Use List&lt;String&gt; and Map&lt;String, Integer&gt;.</span> <bdi>type.</bdi></p>
+      <p id="ltr-tech">این توضیح List&lt;String&gt; را دستی چپ‌چین کرده بودم.</p>
+      <p id="plain-stable"><span>این پاراگراف فارسی ساده است</span> و هیچ پیکان یا عبارت فنی ندارد.</p>
       <p id="ov">این پاراگراف را کاربر دستی چپ‌چین کرده بود.</p>
       <!-- v1.39 integration fixtures: mixed BiDi paragraphs to exercise
            the intersection of v1.38 (LATIN_RUN wrapping) and v1.39 (font
            scale, override clear, site off/on). -->
       <p id="pmix">این متن درباره List&lt;String&gt;, Map&lt;String, Integer&gt; است</p>
+      <p id="ppunct-native" class="Paragraph-kKnblO" dir="auto"><span>و بعد سه حالت مهمش را جدا می‌کنیم: static method، instance method و instance method روی هر object از یک </span><bdi id="native-tail">type.</bdi></p>
       <p id="pcode">مثال کد: <code id="codegen">Gen2&lt;Integer&gt;</code> را ببین.</p>
       <p id="pmixov">این توضیح Java, Spring را دستی چپ‌چین کرده بودم.</p>
       <!-- v1.42.6: arrows inside a Persian prose paragraph, and
@@ -48,6 +52,52 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
   const zoom = (id) => $(id).currentCSSZoom;
   const root = document.documentElement;
   const OV_TEXT = $("ov").textContent;
+  const NATIVE_TEXT = $("ppunct-native").textContent;
+  const NATIVE_TAIL_NODE = $("native-tail").firstChild;
+  const EN_TECH_NODES = Array.from($("en-tech").querySelector("span").childNodes);
+  const EN_NATIVE_NODE = $("en-tech").querySelector("bdi").firstChild;
+  const LTR_TECH_NODE = $("ltr-tech").firstChild;
+  const PLAIN_NODES = [$("plain-stable").querySelector("span").firstChild,
+                       $("plain-stable").lastChild];
+
+  // Processing deliberately yields between batches. Assert eventual
+  // correctness rather than relying on a fast CI worker or a duration.
+  async function waitFor(predicate, message) {
+    for (let i = 0; i < 80; i++) {
+      if (predicate()) return;
+      await S.wait(50);
+    }
+    S.assert(predicate(), message);
+  }
+
+  function charRect(el, index) {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    let node;
+    while ((node = walker.nextNode())) {
+      if (index >= node.data.length) { index -= node.data.length; continue; }
+      const range = document.createRange();
+      range.setStart(node, index);
+      range.setEnd(node, index + 1);
+      return range.getBoundingClientRect();
+    }
+    throw new Error("character not found");
+  }
+
+  function assertPunctuationAtRtlEnd(bdi) {
+    const text = bdi.textContent.trimEnd();
+    const punctuation = charRect(bdi, text.length - 1);
+    const sameLine = [];
+    for (let i = 0; i < text.length; i++) {
+      if (!/[A-Za-z]/.test(text[i])) continue;
+      const rect = charRect(bdi, i);
+      if (Math.abs(punctuation.top - rect.top) < 1) sameLine.push(rect.left);
+    }
+    const latinLeft = Math.min(...sameLine);
+    S.assert(sameLine.length && punctuation.left < latinLeft,
+      "punctuation is on the wrong side: " + JSON.stringify({
+        text, punctuationX: punctuation.left, latinX: latinLeft
+      }));
+  }
 
   // Same hash content.js keys overrides by (fnv-1a over the first 200 chars).
   function fnv(text, cap) {
@@ -58,13 +108,15 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
   }
 
   // A returning user: settings from before this feature (no fontScale),
-  // and two saved manual flips (a pure-Persian one and a mixed one, so
+  // and saved manual flips (pure-Persian and mixed ones, so
   // clear-overrides has more than one entry to sweep).
   const OV_MIX_TEXT = $("pmixov").textContent;
+  const LTR_TECH_TEXT = $("ltr-tech").textContent;
   S.sync = { rtlMode: "smart", fontEnabled: true, lineSpacing: false, siteOff: {} };
   S.local = { overrides: {
     [fnv(OV_TEXT, 200)]: "ltr",
-    [fnv(OV_MIX_TEXT, 200)]: "ltr"
+    [fnv(OV_MIX_TEXT, 200)]: "ltr",
+    [fnv(LTR_TECH_TEXT, 200)]: "ltr"
   } };
 
   try {
@@ -117,6 +169,29 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
 
     await S.test("English paragraph (unmarked) unaffected", async () => {
       S.near(zoom("en"), 1, "english p zoom");
+    });
+
+    await S.test("native dir-auto English technical prose keeps original nodes without redundant isolates", async () => {
+      const p = $("en-tech");
+      S.assert(!p.hasAttribute("data-rastai-rtl"), "English technical prose was marked");
+      S.assert(!p.querySelector('bdi[data-rastai-iso]'), "English technical text gained an isolate");
+      const span = p.querySelector("span");
+      S.assert(span.childNodes.length === EN_TECH_NODES.length &&
+               EN_TECH_NODES.every((node, i) => span.childNodes[i] === node),
+        "English technical text nodes were replaced");
+      S.assert(p.querySelector("bdi").firstChild === EN_NATIVE_NODE,
+        "native English isolate text node was replaced");
+      S.assert(!p.querySelector("bdi").hasAttribute("data-rastai-punct"),
+        "English native punctuation was marked");
+    });
+
+    await S.test("manual LTR prose keeps technical text in its original node", async () => {
+      const p = $("ltr-tech");
+      S.assert(p.getAttribute("data-rastai-rtl") === "ltr", "manual LTR override missing");
+      S.assert(!p.querySelector('bdi[data-rastai-iso]'), "manual LTR gained redundant isolates");
+      S.assert(p.childNodes.length === 1 && p.firstChild === LTR_TECH_NODE,
+        "manual LTR technical text node was replaced");
+      S.assert(p.textContent === LTR_TECH_TEXT, "manual LTR copied text changed");
     });
 
     await S.test("no inline style written per paragraph", async () => {
@@ -213,6 +288,119 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
       S.near(zoom("pmix"), 1.3, "pmix zoom (font scale)");
     });
 
+    await S.test("native bdi containing type-period uses the surrounding RTL sentence direction", async () => {
+      const p = $("ppunct-native");
+      const tail = $("native-tail");
+      S.assert(p.getAttribute("data-rastai-rtl") === "rtl",
+        "native bdi fixture not marked rtl");
+      assertPunctuationAtRtlEnd(tail);
+      S.assert(tail.firstChild === NATIVE_TAIL_NODE && tail.childNodes.length === 1,
+        "native bdi text node was replaced");
+      S.assert(p.textContent === NATIVE_TEXT, "native bdi fixture text changed");
+    });
+
+    await S.test("native punctuation keeps its position across line widths and punctuation marks", async () => {
+      const host = document.createElement("div");
+      $("ppunct-native").after(host);
+      const cases = [];
+      for (const punctuation of [".", ":", ";", "!", "?", "...", "،", "؛", "؟", "…"]) {
+        const p = document.createElement("p");
+        p.append(document.createTextNode("این یک توضیح فارسی است و در پایان آن می‌نویسیم "));
+        const bdi = document.createElement("bdi");
+        bdi.textContent = "Functional Interface" + punctuation;
+        p.append(bdi);
+        host.append(p);
+        cases.push({ p, bdi, node: bdi.firstChild, text: p.textContent });
+      }
+      await S.wait(900);
+      try {
+        for (const item of cases) {
+          S.assert(item.p.getAttribute("data-rastai-rtl") === "rtl", "case not marked rtl");
+          for (const width of [760, 420, 180]) {
+            item.p.style.width = width + "px";
+            assertPunctuationAtRtlEnd(item.bdi);
+          }
+          S.assert(item.bdi.firstChild === item.node && item.bdi.childNodes.length === 1,
+            "Latin phrase text node was replaced");
+          S.assert(item.p.textContent === item.text, "punctuation changed copied text");
+        }
+      } finally { host.remove(); }
+    });
+
+    await S.test("native punctuation updates during streaming and same-text element replacement", async () => {
+      const p = $("ppunct-native");
+      const stop = document.createElement("button");
+      stop.setAttribute("data-testid", "stop-generating");
+      stop.textContent = "Stop";
+      document.body.append(stop);
+      let tail = $("native-tail");
+      try {
+        tail.firstChild.data = "type";
+        await S.wait(700);
+        S.assert(!tail.hasAttribute("data-rastai-punct"), "stale punctuation mark remained");
+        const originalNode = tail.firstChild;
+        tail.firstChild.data = "type:";
+        await S.wait(700);
+        assertPunctuationAtRtlEnd(tail);
+        S.assert(tail.firstChild === originalNode, "streaming replaced the site's text node");
+
+        const replacement = document.createElement("bdi");
+        replacement.id = "native-tail";
+        replacement.textContent = tail.textContent;
+        tail.replaceWith(replacement);
+        tail = replacement;
+        await S.wait(700);
+        assertPunctuationAtRtlEnd(tail);
+        S.assert(tail.getAttribute("data-rastai-punct") === "rtl",
+          "same-text replacement did not receive the punctuation mark");
+
+        tail.firstChild.data = "type.";
+      } finally { stop.remove(); }
+      await S.wait(900);
+      S.assert(p.textContent === NATIVE_TEXT, "streaming changed the fixture text");
+    });
+
+    await S.test("native code, explicit LTR, and nested LTR blocks keep their own isolation", async () => {
+      const host = document.createElement("div");
+      host.innerHTML =
+        '<p>این توضیح فارسی درباره کد است: <code><bdi>type.</bdi></code> ' +
+        '<bdi dir="ltr">type.</bdi> <bdi>List&lt;String&gt;.</bdi> ' +
+        '<bdi>$scope.</bdi> <bdi>_init.</bdi> ' +
+        '<kbd><bdi>type.</bdi></kbd></p>' +
+        '<blockquote>این توضیح فارسی است و پاراگراف زیر انگلیسی است.' +
+        '<p>This is an English sentence about <bdi>type.</bdi></p></blockquote>';
+      $("ppunct-native").after(host);
+      await S.wait(900);
+      try {
+        const protectedBdis = host.querySelectorAll("bdi");
+        for (const bdi of protectedBdis) {
+          S.assert(!bdi.hasAttribute("data-rastai-punct"), "protected isolate was marked");
+          S.assert(getComputedStyle(bdi).direction === "ltr", "protected isolate lost LTR direction");
+        }
+      } finally { host.remove(); }
+    });
+
+    await S.test("a marked native bdi keeps explicit direction and code context when moved", async () => {
+      const p = $("ppunct-native");
+      const tail = $("native-tail");
+      S.assert(tail.hasAttribute("data-rastai-punct"), "native fixture was not marked");
+      tail.setAttribute("dir", "ltr");
+      S.assert(getComputedStyle(tail).direction === "ltr",
+        "explicit dir=ltr was overridden by a stale punctuation mark");
+      tail.removeAttribute("dir");
+      const code = document.createElement("code");
+      tail.before(code);
+      code.append(tail);
+      S.assert(getComputedStyle(tail).direction === "ltr",
+        "moving to code kept the RTL punctuation override");
+      await S.wait(900);
+      S.assert(!tail.hasAttribute("data-rastai-punct"), "code context kept a stale mark");
+      code.replaceWith(tail);
+      await S.wait(900);
+      assertPunctuationAtRtlEnd(tail);
+      S.assert(p.textContent === NATIVE_TEXT, "moving native bdi changed its text");
+    });
+
     await S.test("inline code with generic: LTR direction, no bdi restructuring, scales with prose", async () => {
       // pcode is Persian around <code>Gen2<Integer></code>. Requirements:
       //   - the paragraph is marked RTL
@@ -258,6 +446,13 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
       // bdi wrappers gone.
       S.assert(document.querySelectorAll('bdi[data-rastai-iso="1"]').length === 0,
         "bdi wrappers survived site-off");
+      S.assert(document.querySelectorAll("[data-rastai-punct]").length === 0,
+        "native punctuation marks survived site-off");
+      S.assert($("native-tail").textContent === "type." &&
+               !$("native-tail").hasAttribute("dir"),
+        "site-owned bdi was not restored on site-off");
+      S.assert(getComputedStyle($("native-tail")).direction === "ltr",
+        "site-owned bdi kept the extension's direction after site-off");
       // Font scale gone.
       S.assert(!root.classList.contains("rastai-scale-on"), "scale class survived site-off");
       S.assert(!root.style.getPropertyValue("--rastai-scale"), "scale variable survived site-off");
@@ -277,6 +472,7 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
         "restored bdi content: " + JSON.stringify(bdis[0].textContent));
       S.assert(root.classList.contains("rastai-scale-on"), "scale class not restored");
       S.near(zoom("pmix"), 1.3, "pmix zoom not restored");
+      assertPunctuationAtRtlEnd($("native-tail"));
     });
 
     // -------- v1.40 feature tests --------
@@ -383,6 +579,249 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
     // These pin properties the perf audit relies on. If a future change
     // makes fontScale or lineSpacing re-mark paragraphs, or leaks debug
     // bookkeeping into the debug-off path, these fail.
+
+    await S.test("unchanged plain paragraphs keep their nodes across direction passes", async () => {
+      const p = $("plain-stable");
+      const text = p.textContent;
+      let structuralChanges = 0;
+      const mo = new MutationObserver(records => { structuralChanges += records.length; });
+      mo.observe(p, { childList: true, characterData: true, subtree: true });
+      try {
+        S.send({ type: "rastai-toggle", mode: "always" });
+        await S.wait(250);
+        S.send({ type: "rastai-toggle", mode: "smart" });
+        await S.wait(400);
+        S.assert(p.getAttribute("data-rastai-rtl") === "rtl", "plain paragraph direction lost");
+        S.assert(p.querySelector("span").firstChild === PLAIN_NODES[0] &&
+                 p.lastChild === PLAIN_NODES[1], "plain paragraph text nodes were replaced");
+        S.assert(structuralChanges === 0, "plain paragraph underwent DOM surgery");
+        S.assert(p.textContent === text, "plain paragraph copied text changed");
+      } finally { mo.disconnect(); }
+    });
+
+    await S.test("auto mode still isolates technical Latin in native RTL Persian prose", async () => {
+      const p = document.createElement("p");
+      p.setAttribute("dir", "rtl");
+      p.textContent = "این یک توضیح فارسی درباره List<String>, Map<String, Integer> است.";
+      const text = p.textContent;
+      S.send({ type: "rastai-toggle", mode: "auto" });
+      $("pmix").after(p);
+      try {
+        await waitFor(() => p.querySelector('bdi[data-rastai-iso="1"]'),
+          "auto mode skipped Persian technical isolation");
+        S.assert(!p.hasAttribute("data-rastai-rtl"), "auto mode gained a direction mark");
+        S.assert(p.getAttribute("dir") === "rtl", "native RTL attribute was changed");
+        S.assert(p.querySelector('bdi[data-rastai-iso="1"]').textContent ===
+                 "List<String>, Map<String, Integer>", "auto technical isolate is incomplete");
+        S.assert(p.textContent === text, "auto mode changed copied text");
+      } finally {
+        p.remove();
+        S.send({ type: "rastai-toggle", mode: "smart" });
+        await waitFor(() => $("plain-stable").getAttribute("data-rastai-rtl") === "rtl",
+          "smart mode did not return after auto test");
+      }
+    });
+
+    await S.test("unmarked English generics retain isolation inside an inherited native RTL container", async () => {
+      const host = document.createElement("div");
+      host.setAttribute("dir", "rtl");
+      const p = document.createElement("p");
+      p.textContent = "Use List<String> and Map<String, Integer> safely.";
+      const text = p.textContent;
+      host.append(p);
+      $("pmix").after(host);
+      try {
+        await waitFor(() => p.querySelector('bdi[data-rastai-iso="1"]'),
+          "inherited RTL English technical syntax lost isolation");
+        S.assert(!p.hasAttribute("data-rastai-rtl"), "English paragraph gained a direction mark");
+        S.assert(getComputedStyle(p).direction === "rtl", "native RTL inheritance was changed");
+        for (const bdi of p.querySelectorAll('bdi[data-rastai-iso="1"]')) {
+          S.assert(getComputedStyle(bdi).direction === "ltr", "technical isolate is not LTR");
+        }
+        S.assert(p.textContent === text, "inherited RTL English copied text changed");
+      } finally { host.remove(); }
+    });
+
+    await S.test("CSS RTL overrides native dir-auto without losing English technical isolation", async () => {
+      const p = document.createElement("p");
+      p.setAttribute("dir", "auto");
+      p.style.direction = "rtl";
+      p.textContent = "Use List<String> and Map<String, Integer> safely.";
+      const text = p.textContent;
+      $("pmix").after(p);
+      try {
+        await waitFor(() => p.querySelector('bdi[data-rastai-iso="1"]'),
+          "dir-auto CSS RTL technical syntax lost isolation");
+        S.assert(!p.hasAttribute("data-rastai-rtl"), "English CSS RTL prose gained a mark");
+        S.assert(getComputedStyle(p).direction === "rtl", "site CSS RTL direction was changed");
+        S.assert(p.getAttribute("dir") === "auto", "native dir-auto attribute was changed");
+        S.assert(p.textContent === text, "CSS RTL technical copied text changed");
+      } finally { p.remove(); }
+    });
+
+    await S.test("arrow-only dir-auto prose still mirrors inside a marked RTL ancestor", async () => {
+      const host = document.createElement("blockquote");
+      host.append(document.createTextNode("این یک توضیح فارسی است و پیکان‌های زیر بخشی از همان جریان هستند."));
+      const p = document.createElement("p");
+      p.setAttribute("dir", "auto");
+      p.textContent = "→ ←";
+      host.append(p);
+      $("pmix").after(host);
+      try {
+        await waitFor(() => host.getAttribute("data-rastai-rtl") === "rtl" &&
+          p.querySelectorAll('bdi[data-rastai-iso="arrow"]').length === 2,
+          "neutral dir-auto arrows were not isolated under the RTL ancestor");
+        S.assert(!p.hasAttribute("data-rastai-rtl"), "arrow-only paragraph gained a direction mark");
+        for (const bdi of p.querySelectorAll('bdi[data-rastai-iso="arrow"]')) {
+          S.assert(getComputedStyle(bdi).transform.startsWith("matrix(-1,"),
+            "RTL ancestor did not mirror the neutral arrow");
+        }
+        S.assert(p.textContent === "→ ←", "arrow-only copied text changed");
+      } finally { host.remove(); }
+    });
+
+    await S.test("large streamed subtrees finish every batch without restructuring English or code", async () => {
+      const host = document.createElement("section");
+      const stop = document.createElement("button");
+      stop.setAttribute("data-testid", "stop-generating");
+      stop.textContent = "Stop";
+      document.body.append(stop);
+      const paragraphs = [];
+      for (let group = 0; group < 3; group++) {
+        const nested = document.createElement("div");
+        host.append(nested);
+        for (let i = 0; i < 60; i++) {
+          const p = document.createElement("p");
+          p.textContent = "این یک توضیح فارسی درباره List<String> است و متن آن کامل می‌ماند.";
+          nested.append(p);
+          paragraphs.push({ p, text: p.textContent });
+        }
+      }
+      const english = document.createElement("p");
+      english.setAttribute("dir", "auto");
+      english.textContent = "Use List<String> and Map<String, Integer> without extra isolation.";
+      const englishNode = english.firstChild;
+      const code = document.createElement("pre");
+      code.textContent = "const mapping = new Map<String, Integer>();\nleft → right";
+      const codeNode = code.firstChild;
+      const persianCode = document.createElement("pre");
+      persianCode.textContent = "Interface → می‌گوید چه کاری باید باشد\nLambda → می‌گوید آن کار چگونه انجام شود";
+      const persianCodeText = persianCode.textContent;
+      host.append(english, code, persianCode);
+      $("pmix").after(host);
+      try {
+        await waitFor(() => paragraphs.every(({ p }) =>
+          p.getAttribute("data-rastai-rtl") === "rtl"), "streamed batch left paragraphs unmarked");
+        S.assert(!host.querySelector('bdi[data-rastai-iso]'),
+          "streamed subtree was restructured before the stop signal cleared");
+        stop.remove();
+        await waitFor(() => paragraphs.every(({ p }) =>
+          p.querySelector('bdi[data-rastai-iso="1"]')) &&
+          persianCode.querySelectorAll('bdi[data-rastai-iso="arrow"]').length === 2,
+          "quiet subtree did not finish all technical and Persian arrow batches");
+        S.assert(paragraphs.every(({ p, text }) => p.textContent === text),
+          "batched prose copied text changed");
+        S.assert(english.childNodes.length === 1 && english.firstChild === englishNode &&
+                 !english.querySelector('bdi[data-rastai-iso]'),
+          "batched English technical prose was restructured");
+        S.assert(code.childNodes.length === 1 && code.firstChild === codeNode &&
+                 !code.querySelector('bdi[data-rastai-iso]'),
+          "English code or its arrow was restructured");
+        S.assert(!persianCode.querySelector('bdi[data-rastai-iso="1"]'),
+          "Persian code received Latin prose isolates");
+        S.assert(persianCode.textContent === persianCodeText, "Persian code copied text changed");
+      } finally { stop.remove(); host.remove(); }
+    });
+
+    await S.test("long native punctuation rejection is correct and unchanged passes are idempotent", async () => {
+      const p = document.createElement("p");
+      p.append(document.createTextNode("این یک توضیح فارسی است و عبارت آخر آن در یک بخش جداگانه می‌آید: "));
+      const bdi = document.createElement("bdi");
+      bdi.textContent = "word" + ".".repeat(3200);
+      p.append(bdi);
+      $("ppunct-native").after(p);
+      try {
+        await waitFor(() => bdi.getAttribute("data-rastai-punct") === "rtl",
+          "long valid native punctuation was not marked");
+        bdi.textContent += "X";
+        const text = p.textContent;
+        await waitFor(() => !bdi.hasAttribute("data-rastai-punct"),
+          "long nonterminal punctuation retained a stale mark");
+        await S.wait(700);
+        const nodes = Array.from(bdi.childNodes);
+        let structuralChanges = 0;
+        const mo = new MutationObserver(records => { structuralChanges += records.length; });
+        mo.observe(bdi, { childList: true, characterData: true, subtree: true });
+        try {
+          S.send({ type: "rastai-toggle", mode: "always" });
+          await S.wait(250);
+          S.send({ type: "rastai-toggle", mode: "smart" });
+          await S.wait(400);
+          S.assert(!bdi.hasAttribute("data-rastai-punct"), "unchanged invalid punctuation was marked");
+          S.assert(bdi.childNodes.length === nodes.length &&
+                   nodes.every((node, i) => bdi.childNodes[i] === node),
+            "unchanged native content nodes were replaced");
+          S.assert(structuralChanges === 0, "unchanged long native content churned");
+          S.assert(p.textContent === text, "long native punctuation copied text changed");
+        } finally { mo.disconnect(); }
+      } finally { p.remove(); }
+    });
+
+    await S.test("attribute-only streaming markers invalidate the probe cache and release deferred wrapping", async () => {
+      const host = document.createElement("section");
+      const marker = document.createElement("div");
+      const p = document.createElement("p");
+      p.textContent = "این یک پاراگراف فارسی ساده است و هنوز هیچ عبارت فنی در آن نیامده است.";
+      host.append(marker, p);
+      $("pmix").after(host);
+      try {
+        await waitFor(() => p.getAttribute("data-rastai-rtl") === "rtl",
+          "pre-existing streaming fixture was not processed");
+        await S.wait(700);
+        // The marker already exists, so this change must invalidate the
+        // cached candidate list without relying on a childList mutation.
+        marker.setAttribute("data-is-streaming", "true");
+        await S.wait(200);
+        const node = p.firstChild;
+        node.data = "این یک توضیح فارسی درباره List<String>, Map<String, Integer> است.";
+        const text = p.textContent;
+        await S.wait(700);
+        S.assert(!p.querySelector('bdi[data-rastai-iso]'),
+          "attribute-only streaming start did not defer technical wrapping");
+        S.assert(p.firstChild === node, "streaming replaced the renderer's text node");
+        marker.setAttribute("data-is-streaming", "false");
+        await waitFor(() => p.querySelector('bdi[data-rastai-iso="1"]'),
+          "attribute-only streaming end did not release deferred wrapping");
+        S.assert(p.textContent === text, "deferred wrapping changed copied text");
+      } finally { host.remove(); }
+    });
+
+    await S.test("unrelated aria-label activity cannot hold technical wrapping in streaming state", async () => {
+      const host = document.createElement("section");
+      const widget = document.createElement("div");
+      widget.setAttribute("aria-label", "Status 0");
+      const p = document.createElement("p");
+      p.textContent = "این یک توضیح فارسی ساده است و فقط یک بار عبارت فنی به آن اضافه خواهد شد.";
+      host.append(widget, p);
+      $("pmix").after(host);
+      try {
+        await waitFor(() => p.getAttribute("data-rastai-rtl") === "rtl",
+          "label-noise fixture was not processed");
+        await S.wait(700);
+        p.firstChild.appendData(" List<String>, Map<String, Integer>");
+        const text = p.textContent;
+        let wrappedDuringNoise = false;
+        // More than eight independent observer batches within 1200 ms
+        // would falsely report textual streaming if labels were counted.
+        for (let i = 1; i <= 32; i++) {
+          widget.setAttribute("aria-label", "Status " + i);
+          await S.wait(40);
+          if (p.querySelector('bdi[data-rastai-iso="1"]')) wrappedDuringNoise = true;
+        }
+        S.assert(wrappedDuringNoise, "unrelated label updates postponed technical wrapping");
+        S.assert(p.textContent === text, "label activity changed copied paragraph text");
+      } finally { host.remove(); }
+    });
 
     await S.test("fontScale change does NOT re-mark already-marked paragraphs (CSS-only)", async () => {
       // p1 is already marked. Capture a mutation observer on its own
@@ -535,6 +974,23 @@ Lambda → می‌گوید «آن کار چگونه انجام شود»</pre>
       await S.wait(100);
       S.assert(document.querySelectorAll("[data-rastai-src]").length === 0,
         "src attr survived debug off");
+    });
+
+    await S.test("settled debug-off pages do not repeat global streaming-marker queries", async () => {
+      // Keep instrumentation confined to this final quiet interval. It
+      // neither changes selector results nor runs during streaming tests.
+      await S.wait(1600);
+      const queryAll = document.querySelectorAll;
+      let markerQueries = 0;
+      document.querySelectorAll = function (selector) {
+        if (String(selector).includes('[data-is-streaming="true"]')) markerQueries++;
+        return queryAll.call(this, selector);
+      };
+      try {
+        await S.wait(1200);
+        S.assert(markerQueries === 0,
+          "unchanged idle page repeated the global marker query " + markerQueries + " times");
+      } finally { document.querySelectorAll = queryAll; }
     });
   } catch (e) { S.fail(e); return; }
   S.finish();

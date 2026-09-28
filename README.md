@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/AliMirzad/RastAi/releases">
-    <img src="https://img.shields.io/badge/version-1.42.8-22c55e" alt="Version 1.42.8">
+    <img src="https://img.shields.io/badge/version-1.42.15-22c55e" alt="Version 1.42.15">
   </a>
   <a href="https://github.com/AliMirzad/RastAi/actions/workflows/ci.yml">
     <img src="https://github.com/AliMirzad/RastAi/actions/workflows/ci.yml/badge.svg" alt="CI">
@@ -132,7 +132,7 @@ RastAI:
 
 ## توسعه و آزمون
 
-پیش‌نیاز اجرای آزمون‌ها [Node.js](https://nodejs.org/) است. آزمون‌های مرورگری
+پیش‌نیاز اجرای آزمون‌ها [Node.js 22 یا جدیدتر](https://nodejs.org/) است. آزمون‌های مرورگری
 به Chrome یا یک مرورگر Chromium نیاز دارند.
 
 ```bash
@@ -155,6 +155,17 @@ node tools/ui.test.js
 node tools/bench.js
 node tools/browser-bench.js
 ```
+
+بنچمارک مرورگر، مصرف CPU پردازشگر صفحه را با زمان واقعی و افزونهٔ روشن/خاموش
+می‌سنجد؛ تایمرها یا زمان‌بندی مرورگر را جایگزین نمی‌کند. برای مقایسه با یک
+نسخهٔ قبلی از `content.js`:
+
+```bash
+node tools/browser-bench.js --baseline path/to/previous/content.js --runs 3 --size 600 --json
+```
+
+انتخاب مرورگر با `CHROME_PATH` یا `CHROME` ممکن است. این ابزار فقط از پروفایل
+موقت مستقل استفاده می‌کند و به تب‌ها یا حساب‌های مرورگر شخصی دست نمی‌زند.
 
 مجموعهٔ فعلی بیش از ۸۰۰ بررسی خودکار برای موتور جهت، BiDi، جدول‌ها، تایپوگرافی،
 رابط افزونه و تنظیمات دارد.
