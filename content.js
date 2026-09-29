@@ -213,6 +213,22 @@
     "padding-right:1.75em!important;padding-left:0!important;" +
     "margin-right:0!important;}\n" +
 
+    // OL marker fix: browsers render the decimal marker's text ("1.")
+    // inside the list item's inline direction. In an RTL-marked list the
+    // trailing "." is a bidi-neutral after a European number, so the
+    // paragraph direction flips the pair on screen and the reader sees
+    // ".1", ".2", ".3" instead of "1.", "2.", "3.". Isolating the marker
+    // and giving it an LTR base keeps "N." intact without changing its
+    // side (it still sits on the RTL start edge, which is the right).
+    // Also applied to any ol > li descendants of an rtl-marked container,
+    // since the child ol usually inherits direction without carrying its
+    // own mark.
+    "html." + CLASS_RTL + " ol[" + MARK + "=\"rtl\"] > li::marker," +
+    "html." + CLASS_RTL + " [" + MARK + "=\"rtl\"] ol > li::marker," +
+    "html." + CLASS_RTL + " ul[" + MARK + "=\"rtl\"] > li::marker," +
+    "html." + CLASS_RTL + " [" + MARK + "=\"rtl\"] ul > li::marker{" +
+    "direction:ltr!important;unicode-bidi:isolate!important;}\n" +
+
     // Small typography polish for marked RTL content. Only line-height
     // and margins are touched — sizes, colours, and font-weights are
     // whatever the site chose. Everything else is left to the site's
@@ -508,6 +524,14 @@
   // handles those in an RTL context correctly on its own and any
   // <bdi dir="ltr"> we add would freeze the glyph the wrong way.
   const HAS_LATIN = /[A-Za-z0-9_$]/;
+  // A strong Latin character makes the matched run an LTR island. In an
+  // RTL paragraph every such island is isolated, regardless of the words,
+  // numbers or punctuation around it. This follows the semantic direction
+  // boundary instead of recognising individual heading shapes.
+  const HAS_LATIN_LETTER = /[A-Za-z]/;
+  const RTL_STRONG = /[֐-׿؀-ۿݐ-ݿﭐ-﷿ﹰ-﻿]/;
+  const NUMBER_CHAR = /[0-9٠-٩۰-۹]/;
+  const WEAK_PREFIX_SEPARATOR = /[\s\-.:;)\]\u2010-\u2015]/;
   const OLD_ISOLATE_CHARS = /[⁦-⁩]/g;
 
   // Text that does NOT count toward the language decision. An identifier
@@ -984,6 +1008,7 @@
       const text = bdi.textContent || "";
       const eligible = rtl && (hasNativePunctuation(text) ||
         (PERSIAN_LIST_DELIMITER.test(text) && NATIVE_PERSIAN_LIST.test(text.trim())) ||
+        weakNumericPrefixFollowsRtl(bdi, root, text) ||
         isLeadingProseIndex(bdi, root, text));
       if (eligible) {
         if (bdi.getAttribute(PUNCT_ATTR) !== "rtl") {
@@ -1010,6 +1035,35 @@
       if (offset >= 0 && offset < value.length) return PERSIAN_LIST_DELIMITER.test(value.charAt(offset));
     }
     return false;
+  }
+
+  // Return the part before the first Latin strong character when it is a
+  // weak numeric prefix separated from the Latin phrase. The prefix belongs
+  // to the surrounding RTL flow when RTL text precedes it. Attached tokens
+  // such as "3D", "8080/api" and "--force" deliberately return zero.
+  function weakNumericPrefixLength(text) {
+    const firstLatin = text.search(HAS_LATIN_LETTER);
+    if (firstLatin <= 0) return 0;
+    const prefix = text.slice(0, firstLatin);
+    return NUMBER_CHAR.test(prefix) && WEAK_PREFIX_SEPARATOR.test(prefix) ? firstLatin : 0;
+  }
+
+  function hasRtlStrongBefore(textNode, text, index, root) {
+    if (RTL_STRONG.test(text.slice(0, index))) return true;
+    const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    walker.currentNode = textNode;
+    let node;
+    while ((node = walker.previousNode())) {
+      if (RTL_STRONG.test(node.data || "")) return true;
+    }
+    return false;
+  }
+
+  function weakNumericPrefixFollowsRtl(bdi, root, text) {
+    if (!weakNumericPrefixLength(text)) return false;
+    const walker = document.createTreeWalker(bdi, NodeFilter.SHOW_TEXT);
+    const first = walker.nextNode();
+    return !!first && hasRtlStrongBefore(first, first.data || "", 0, root);
   }
 
   function splitAndWrap(textNode, text, root, hasPersianList) {
@@ -1043,12 +1097,9 @@
         continue;
       }
 
-      // Latin run: wrap when the run itself contains BiDi-neutral
-      // punctuation the browser could split around (parens, angle
-      // brackets, commas, …). A plain Latin word or phrase without
-      // any of those chars normally needs no wrapper. One exception is
-      // a Persian list: isolate its terms separately so the Persian
-      // delimiter doesn't join them into one left-to-right sequence.
+      // Every Latin run in RTL prose is a semantic LTR island. Isolating
+      // the run itself keeps adjacent RTL numbers and separators in their
+      // paragraph flow. In "بخش 3 — Title", only "Title" is isolated.
       //
       // Trailing sentence punctuation (. , ; : ! ?) is deliberately
       // LEFT OUTSIDE the bdi. In an RTL paragraph, a period after
@@ -1059,11 +1110,14 @@
       const listTerm = hasPersianList &&
         (touchesPersianList(textNode, text, m.index - 1, -1, root) ||
          touchesPersianList(textNode, text, LATIN_RUN.lastIndex, 1, root));
-      if (!NEEDS_ISO.test(run) && !listTerm) continue;
-      if (m.index > lastIndex) {
-        pieces.push({ text: text.slice(lastIndex, m.index), iso: false });
+      if (!HAS_LATIN_LETTER.test(run) && !NEEDS_ISO.test(run) && !listTerm) continue;
+      const weakPrefix = weakNumericPrefixLength(run);
+      const isolateAt = weakPrefix && hasRtlStrongBefore(textNode, text, m.index, root)
+        ? m.index + weakPrefix : m.index;
+      if (isolateAt > lastIndex) {
+        pieces.push({ text: text.slice(lastIndex, isolateAt), iso: false });
       }
-      pieces.push({ text: run, iso: true });
+      pieces.push({ text: text.slice(isolateAt, LATIN_RUN.lastIndex), iso: true });
       anyIso = true;
       lastIndex = LATIN_RUN.lastIndex;
     }
@@ -1181,7 +1235,7 @@
     OLD_ISOLATE_CHARS.lastIndex = 0;
     const hasLegacy = OLD_ISOLATE_CHARS.test(text);
     OLD_ISOLATE_CHARS.lastIndex = 0;
-    if (!hasLegacy && (!wrapping || !NEEDS_ISO.test(text) || !HAS_WRAPPABLE.test(text))) return;
+    if (!hasLegacy && (!wrapping || !HAS_WRAPPABLE.test(text))) return;
     // Only potentially risky, unmarked English prose needs this read.
     // dir=auto alone is not proof: CSS can override it, and arrow-only
     // text has no strong character and can inherit an RTL base.
@@ -1203,7 +1257,7 @@
       OLD_ISOLATE_CHARS.lastIndex = 0;
       const hasOld = OLD_ISOLATE_CHARS.test(data);
       OLD_ISOLATE_CHARS.lastIndex = 0;
-      if (!hasOld && (!HAS_WRAPPABLE.test(data) || (!hasPersianList && !NEEDS_ISO.test(data)))) continue;
+      if (!hasOld && !HAS_WRAPPABLE.test(data)) continue;
       const parent = node.parentElement;
       if (!parent) continue;
       if (parent !== memoPar) {
@@ -1222,6 +1276,16 @@
       }
       if (memoSkip) continue;
       if (parent.tagName === "BDI" && parent.hasAttribute(ISO_ATTR)) continue;
+      // A site-owned <bdi> is already an isolation boundary. Preserve its
+      // text nodes and let syncNativePunctuation adjust its base direction.
+      // The only exception is a Persian-delimited list inside one bdi:
+      // its separate Latin terms need separate islands around the delimiter.
+      const nativeBdi = parent.closest && parent.closest("bdi:not([" + ISO_ATTR + "])");
+      if (nativeBdi && !PERSIAN_LIST_DELIMITER.test(nativeBdi.textContent || "")) {
+        const nativeText = nativeBdi.textContent || "";
+        if (!weakNumericPrefixLength(nativeText) ||
+            !hasRtlStrongBefore(node, node.data || "", 0, root)) continue;
+      }
       if (!hasOld && !memoWrap) continue;
       targets.push({ node: node, hasOld: hasOld, wrap: memoWrap });
     }

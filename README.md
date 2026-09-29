@@ -12,7 +12,7 @@
 
 <p align="center">
   <a href="https://github.com/AliMirzad/RastAi/releases">
-    <img src="https://img.shields.io/badge/version-1.42.15-22c55e" alt="Version 1.42.15">
+    <img src="https://img.shields.io/badge/version-1.42.16-22c55e" alt="Version 1.42.16">
   </a>
   <a href="https://github.com/AliMirzad/RastAi/actions/workflows/ci.yml">
     <img src="https://github.com/AliMirzad/RastAi/actions/workflows/ci.yml/badge.svg" alt="CI">

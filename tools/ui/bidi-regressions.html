@@ -17,6 +17,13 @@
   <p id="native" dir="auto"><span>این می‌شود </span><bdi>Method Reference.</bdi><span> کتاب هم </span><bdi>Method Reference</bdi><span> را راهی برای اشاره به یک متد بدون اجرای فوری آن معرفی می‌کند. مثل </span><bdi>Lambda، Method Reference</bdi><span> هم به یک </span><bdi>Functional Interface</bdi><span> سازگار نیاز دارد.</span></p>
   <h2 id="heading" dir="auto">10) حالت مهم‌تر: Instance Method روی هر Object از یک Type</h2>
   <h2 id="native-heading" dir="auto"><bdi>10)</bdi><span> حالت مهم‌تر: </span><bdi>Instance Method</bdi><span> روی هر </span><bdi>Object</bdi><span> از یک </span><bdi>Type</bdi></h2>
+  <h2 id="section-heading" dir="auto">&#1576;&#1582;&#1588; 3 — Special String Operations</h2>
+  <h2 id="character-heading" dir="auto">&#1576;&#1582;&#1588; 5 — Character Extraction</h2>
+  <h2 id="persian-number-heading" dir="auto">&#1601;&#1589;&#1604; &#1779;: Array Access</h2>
+  <h2 id="split-section-heading" dir="auto"><span>&#1576;&#1582;&#1588; 3 — </span><span>Special String Operations</span></h2>
+  <h2 id="native-section-heading" dir="auto"><span>&#1576;&#1582;&#1588;</span><bdi>6 – String Comparison</bdi></h2>
+  <h2 id="unnumbered-heading" dir="auto">&#1585;&#1575;&#1607;&#1606;&#1605;&#1575;&#1740; Character Extraction &#1662;&#1740;&#1588;&#1585;&#1601;&#1578;&#1607;</h2>
+  <p id="plain-number" dir="auto">&#1606;&#1587;&#1582;&#1607; 5 &#1605;&#1606;&#1578;&#1588;&#1585; &#1588;&#1583;</p>
   <pre id="explanation"><code class="language-plaintext">this
 → مربوط به enclosing object است
 → Lambda this مستقل ندارد</code></pre>
@@ -80,6 +87,18 @@
     const bdi = $('sentence-tail').querySelector('bdi:not([data-rastai-iso])');
     S.assert(at(bdi, '.').left < at(bdi, 'type').left, 'final period no longer ends the RTL sentence');
   }
+  function assertSectionHeading(h, labelWord = '\u0628\u062e\u0634', numberWord = '3',
+                                separatorWord = '—', titleWord = 'Special String Operations') {
+    const persian = at(h, labelWord);
+    const number = at(h, numberWord);
+    const dash = at(h, separatorWord);
+    const title = at(h, titleWord.split(' ')[0]);
+    S.assert(persian.top === number.top && number.top === dash.top && dash.top === title.top,
+      'section heading wrapped unexpectedly');
+    S.assert(persian.left > number.left && number.left > dash.left && dash.left > title.left,
+      'section number detached from its Persian label');
+    assertWord(h, titleWord);
+  }
   try {
     S.sync = { rtlMode: 'smart', fontEnabled: false, siteOff: {} };
     await S.loadScript('../../engine.js');
@@ -89,6 +108,42 @@
     await S.test('Persian comma separates Latin terms inside a native bdi', () => assertList($('native')));
     await S.test('numbered mixed heading retains RTL index and Latin identifiers', () => assertHeading($('heading')));
     await S.test('native bdi heading index follows Persian enumeration direction', () => assertHeading($('native-heading')));
+    await S.test('Persian section number stays before a plain Latin title', () => assertSectionHeading($('section-heading')));
+    await S.test('all numbered Persian/Latin headings use the same generic fix', () =>
+      assertSectionHeading($('character-heading'), '\u0628\u062e\u0634', '5', '—', 'Character Extraction'));
+    await S.test('Persian digits and alternate separators use the same generic fix', () => {
+      const h = $('persian-number-heading');
+      const label = at(h, '\u0641\u0635\u0644');
+      const number = at(h, '\u06F3');
+      const separator = at(h, ':');
+      const title = at(h, 'Array');
+      S.assert(label.left > number.left && number.left > separator.left && separator.left > title.left,
+        'Persian-number heading order is broken');
+      assertWord(h, 'Array Access');
+    });
+    await S.test('Persian section number survives renderer spans', () => assertSectionHeading($('split-section-heading')));
+    await S.test('site-owned bdi does not absorb the RTL section number', () => {
+      const h = $('native-section-heading');
+      const native = h.querySelector(':scope > bdi');
+      const copied = h.textContent;
+      S.assert(at(h, '\u0628\u062e\u0634').left > at(h, '6').left &&
+        at(h, '6').left > at(h, '–').left && at(h, '–').left > at(h, 'String').left,
+        'native bdi kept the number in the LTR island');
+      S.assert(native && native.isConnected && native.querySelector('bdi[data-rastai-iso="1"]'),
+        'site-owned bdi boundary was not segmented');
+      S.assert(h.textContent === copied, 'native bdi repair changed copied text');
+      assertWord(h, 'String Comparison');
+    });
+    await S.test('unnumbered Latin islands use the same direction boundary', () => {
+      const h = $('unnumbered-heading');
+      S.assert(at(h, '\u0631\u0627\u0647\u0646\u0645\u0627\u06cc').left > at(h, 'Character').left &&
+        at(h, 'Character').left > at(h, '\u067e\u06cc\u0634\u0631\u0641\u062a\u0647').left,
+        'ordinary mixed heading order is broken');
+      assertWord(h, 'Character Extraction');
+    });
+    await S.test('plain RTL numbers are not turned into LTR islands', () => {
+      S.assert(!$('plain-number').querySelector('bdi[data-rastai-iso]'), 'plain number was unnecessarily isolated');
+    });
     await S.test('plain-text explanations with identifier-led lines use RTL, not code majority', () => {
       const pre = $('explanation');
       S.assert(pre.getAttribute('data-rastai-rtl') === 'rtl', 'plain-text explanation is LTR');
@@ -155,7 +210,10 @@
       S.assert(!document.querySelector('[data-rastai-punct], bdi[data-rastai-iso], [data-rastai-rtl]'), 'owned state remained while off');
       for (const [el, text] of originals) S.assert(el.textContent === text, el.id + ' off changed copied text');
       S.send({ type: 'rastai-toggle', siteOn: true }); await settle();
-      assertList($('plain')); assertList($('native')); assertHeading($('heading')); assertHeading($('native-heading')); assertTail();
+      assertList($('plain')); assertList($('native')); assertHeading($('heading')); assertHeading($('native-heading'));
+      assertSectionHeading($('section-heading'));
+      assertSectionHeading($('character-heading'), '\u0628\u062e\u0634', '5', '—', 'Character Extraction');
+      assertSectionHeading($('split-section-heading')); assertTail();
     });
     S.finish();
   } catch (e) { S.fail(e); }
