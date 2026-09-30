@@ -24,8 +24,11 @@
       line-height:1.45!important;}
     html.rastai-rtl-on ul[data-rastai-rtl="rtl"], html.rastai-rtl-on ol[data-rastai-rtl="rtl"]{
       padding-right:1.75em!important;padding-left:0!important;margin-right:0!important;}
-    html.rastai-rtl-on [data-rastai-rtl="rtl"] :is(ul,ol) :is(ul,ol){
+    html.rastai-rtl-on [data-rastai-rtl="rtl"] :is(ul,ol):not([data-rastai-rtl]){
+      direction:rtl!important;
       padding-right:1.5em!important;padding-left:0!important;}
+    html.rastai-rtl-on [data-rastai-rtl="rtl"] > bdi:not([data-rastai-iso]):not([data-rastai-rtl]){
+      display:inline-block!important;}
     html.rastai-rtl-on blockquote[data-rastai-rtl="rtl"], html.rastai-rtl-on [data-rastai-rtl="rtl"] blockquote{
       border-inline-start-style:solid!important;border-inline-start-width:3px!important;
       border-left:0!important;
@@ -105,6 +108,42 @@
       const inner = stage.querySelector("ul ul");
       const npr = parseFloat(getComputedStyle(inner).paddingRight);
       t.assert("nested padding-right > 0", npr > 20, "npr=" + npr);
+    });
+
+    suite("nested list — unmarked sub-list inside RTL container flips to RTL", (t) => {
+      // Regression: Claude sub-lists carry dir="auto"; when their first
+      // item is English the <ul> resolves LTR and English-only siblings
+      // keep their bullets on the LEFT while Persian siblings drop
+      // theirs on the RIGHT. The rule forces the sub-list itself to RTL
+      // so every marker lands on the same side.
+      put('<li data-rastai-rtl="rtl" dir="rtl"><strong>PriorityQueue</strong>' +
+          '<ul dir="auto"><li>priority ordering</li><li>head</li>' +
+          '<li data-rastai-rtl="rtl">نکته</li></ul></li>');
+      const sub = stage.querySelector("ul");
+      t.eq("sub-list direction", getComputedStyle(sub).direction, "rtl");
+      const items = stage.querySelectorAll("ul > li");
+      for (const li of items) {
+        t.eq("sub-item '" + li.textContent.slice(0, 12) + "' direction",
+             getComputedStyle(li).direction, "rtl");
+      }
+    });
+
+    suite("trailing native <bdi> — atomic wrap inside RTL block", (t) => {
+      // Regression: Claude headings look like
+      //   <h1><span>… mixed run …</span><bdi>چه داشت؟</bdi></h1>
+      // In an RTL flow the leftmost gap of line 1 grabbed only the
+      // first word of that trailing <bdi> and stranded the rest on
+      // line 2. inline-block makes the whole <bdi> one atomic box for
+      // outer wrapping while still allowing internal wrapping.
+      put('<h1 data-rastai-rtl="rtl" dir="rtl">' +
+          '<span><bdi data-rastai-iso="1">2. Java</bdi> قبل از ' +
+          '<bdi data-rastai-iso="1">Collections Framework</bdi></span>' +
+          '<bdi>چه داشت؟</bdi></h1>');
+      const outerBdi = stage.querySelector('h1 > bdi:not([data-rastai-iso])');
+      t.eq("native bdi display", getComputedStyle(outerBdi).display, "inline-block");
+      // Our own iso wrappers are still plain inline — no side-effect there.
+      const isoBdi = stage.querySelector('bdi[data-rastai-iso="1"]');
+      t.eq("iso bdi display", getComputedStyle(isoBdi).display, "inline");
     });
 
     suite("blockquote — start-edge accent bar in RTL", (t) => {

@@ -46,6 +46,9 @@
 
   const CLASS_RTL = "rastai-rtl-on";
   const CLASS_FONT = "rastai-font-on";
+  // Set on marked paragraphs that are far outside the visible viewport.
+  // See the far-observer block near the end of this file for why.
+  const CLASS_FAR = "rastai-far";
   const MARK = "data-rastai-rtl";
   const ISO_ATTR = "data-rastai-iso";
   const PUNCT_ATTR = "data-rastai-punct";
@@ -106,10 +109,20 @@
 
   // ---- tuning knobs -------------------------------------------------
   const STREAM_QUIET_MS = 550;  // element must be textually still this long
-  const FRAME_BUDGET_MS = 8;    // work budget for one drain slice
+  // Slice budget: 5ms leaves ~11ms of the frame for the compositor and
+  // paint work, which is what an underpowered CPU needs to stay smooth
+  // during a scroll or a token burst. On a fast CPU the extra slice
+  // rescheduling costs nothing measurable, so this is a strict win.
+  const FRAME_BUDGET_MS = 5;
   const MIN_BATCH = 1;          // guarantee progress, then respect the slice budget
   const STREAM_CACHE_MS = 400;  // how long the streaming probe is cached
-  const HOT_MIN_MS = 220;       // min gap between visits to one element
+  // Streaming re-entry throttle: raised from 220 ms so a paragraph that
+  // is already marked and being written to is re-examined ~3 times a
+  // second instead of ~4. The direction and structural work are both
+  // deferred anyway while tokens arrive, so the extra visits only paid
+  // for the observer bookkeeping — pure cost, no benefit, and it added
+  // up on a weak CPU during a long streamed answer.
+  const HOT_MIN_MS = 300;
   const FREEZE_LEN = 240;       // chars after which a direction is settled
   const RESCAN_DEBOUNCE_MS = 220;   // min gap between whole-document sweeps
 
@@ -191,6 +204,42 @@
     "direction:ltr!important;text-align:left!important;" +
     "unicode-bidi:isolate!important;}\n" +
 
+    // Performance: contain layout and style inside a marked paragraph so
+    // one paragraph's mutation cannot invalidate the layout or the style
+    // of the sibling paragraphs above and below it. On a long chat with
+    // hundreds of messages this is the single biggest scroll-smoothness
+    // win — every message becomes its own layout island.
+    //
+    // Scope is deliberate:
+    //   * table / td / th : table layout shares column widths across rows
+    //     and cells, so containment there breaks the grid.
+    //   * ul / ol         : list items on the outer list, containment on
+    //     the list itself is redundant.
+    //   * pre             : syntax highlighters can render overlays that
+    //     extend just beyond the block's own box; containment would clip.
+    //   * code            : always sits inside another marked host, whose
+    //     containment already covers it.
+    // Everything else — p, li, blockquote, h1..h6, dd, dt, figcaption,
+    // summary — has content that never affects a sibling's layout, so it
+    // is safe to fence off.
+    "html." + CLASS_RTL + " [" + MARK + "]:is(p,li,blockquote,h1,h2,h3,h4,h5,h6,dd,dt,figcaption,summary){" +
+    "contain:layout style!important;}\n" +
+
+    // Content-visibility gate for paragraphs that are FAR outside the
+    // viewport. The class is toggled by an IntersectionObserver with a
+    // two-viewport rootMargin (see the far-observer block later in the
+    // file), so the browser only paints and lays out the paragraphs the
+    // user could plausibly see next. `auto` — not `hidden` — because
+    // find-in-page and accessibility traversal must still reach the
+    // skipped content. `contain-intrinsic-size: auto` remembers each
+    // paragraph's real size once it has been rendered, which keeps the
+    // scrollbar stable — the missing piece from the earlier
+    // content-visibility:auto experiment that regressed scroll.
+    "html." + CLASS_RTL + " ." + CLASS_FAR + "{" +
+    "content-visibility:auto!important;" +
+    "contain-intrinsic-size:auto 200px!important;}\n" +
+
+
     // A native <bdi> containing "type." defaults to LTR and traps the
     // sentence's period on that side. Eligible plain-prose isolates get
     // an RTL base direction without replacing any site-owned text nodes.
@@ -243,7 +292,17 @@
     "line-height:1.45!important;}\n" +
     // Nested lists indent from the RIGHT in RTL. The browser default
     // uses padding-left, which mirrors to the wrong side for us.
-    "html." + CLASS_RTL + " [" + MARK + "=\"rtl\"] :is(ul,ol) :is(ul,ol){" +
+    //
+    // Also flip an unmarked nested list to RTL when the surrounding
+    // paragraph is RTL. Claude renders sub-lists with dir="auto" on the
+    // <ul>, so a list whose first item is English-only ("priority
+    // ordering", "head") resolves LTR and drops its bullets on the LEFT
+    // — right next to sibling items whose Persian text was marked RTL
+    // and whose bullets already sit on the right. The result is one
+    // list with two columns of bullets. Forcing the parent list itself
+    // to RTL puts every marker back on the same (right) side.
+    "html." + CLASS_RTL + " [" + MARK + "=\"rtl\"] :is(ul,ol):not([" + MARK + "]){" +
+    "direction:rtl!important;" +
     "padding-right:1.5em!important;padding-left:0!important;}\n" +
     // Blockquotes: keep the accent bar on the START edge in RTL. Some
     // sites hard-code border-left; a start-relative rule wins on marked
@@ -294,6 +353,25 @@
     "direction:ltr!important;unicode-bidi:isolate!important;" +
     "display:inline;font:inherit;color:inherit;" +
     "background:transparent;padding:0;margin:0;border:0;}\n" +
+
+    // A native <bdi> sitting as a direct child of an RTL-marked
+    // paragraph is placed AFTER the paragraph's other inline content in
+    // DOM order, which in RTL flow puts it on the visual LEFT of the
+    // last filled line. Claude emits headings shaped like
+    //     <h1><span>… mixed run …</span><bdi>چه داشت؟</bdi></h1>
+    // — when the line runs long, only the first word of that trailing
+    // <bdi> fits in the leftmost gap of line 1, and the remainder wraps
+    // to line 2. The reader sees «چه» stranded at the far left of line
+    // 1 and «داشت؟» stuck to the far right of line 2, with a full line
+    // of unrelated text in between. Isolate alone (which the UA
+    // stylesheet already sets on <bdi>) does not prevent word breaks
+    // inside the element. Making the <bdi> an inline-block makes its
+    // whole content atomic for external wrapping while still allowing
+    // internal wrapping if the box itself is wider than the container,
+    // so a short trailing phrase stays together on one line and a long
+    // one still wraps.
+    "html." + CLASS_RTL + " [" + MARK + "=\"rtl\"] > bdi:not([" + ISO_ATTR + "]):not([" + MARK + "]){" +
+    "display:inline-block!important;}\n" +
 
     // Arrow-only bdi: rendered as an inline-block, glyph mirrored with
     // transform:scaleX(-1). Browsers do not apply Unicode Bidi_Mirrored
@@ -502,8 +580,22 @@
   // and '_' after generic-syntax tests showed "$scope" and "_init()"
   // losing their identifier lead — the same visual-reorder shape as
   // "Java<Integer>" wearing a stripped prefix.
+  //
+  // A THIRD alternative catches a bare section number with its trailing
+  // period, like "11." or "1." at the start of a heading or list item.
+  // The main alternative refuses to end on ".", so a run of pure digits
+  // followed by "." with no strong Latin letter after it leaves the
+  // period outside — and BiDi in an RTL paragraph then gives that "."
+  // the base RTL level while the digits stay at level 2 (LTR). The
+  // reader sees ".11" instead of "11.", i.e. the period stranded on the
+  // visual LEFT of the number. Matching "digits + '.'" as its own run
+  // lets splitAndWrap wrap the pair in one bdi so the pair stays put.
+  // The lookahead keeps decimals like "1.5" and identifiers like
+  // "v1_2" from being cut short: the pattern only fires when the "."
+  // is NOT followed by another word character.
   const LATIN_RUN = new RegExp(
-    "[\\[({]?[\\-/@$_]*[A-Za-z0-9_$](?:[A-Za-z0-9._,;:=!<>+*/%&|?~^#\\[\\](){}@\\\\$_ " + ARROWS + "\\-]*" +
+    "[0-9]+\\.(?![0-9A-Za-z_$])" +
+    "|[\\[({]?[\\-/@$_]*[A-Za-z0-9_$](?:[A-Za-z0-9._,;:=!<>+*/%&|?~^#\\[\\](){}@\\\\$_ " + ARROWS + "\\-]*" +
     "[A-Za-z0-9_$\\]})>])?|[" + ARROWS + "]+",
     "g"
   );
@@ -518,8 +610,18 @@
   // BiDi treats as ambiguous inside a Persian frame.
   const NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/\\u060C\\u061B" + ARROWS + "]");
   const PERSIAN_LIST_DELIMITER = /[\u060C\u061B]/;
+  // A bare section-number run \u2014 "1.", "11.", "23." \u2014 that LATIN_RUN's
+  // dedicated alternative picks out. splitAndWrap treats a run that
+  // matches this as ISO-worthy so the period does not slip out into the
+  // outer RTL flow.
+  const SECTION_NUMBER = /^[0-9]+\.$/;
 
-  const HAS_WRAPPABLE = new RegExp("[A-Za-z" + ARROWS + "]");
+  // Text nodes worth walking. Latin letters and arrows always need it;
+  // a bare "N." section number (see LATIN_RUN's dedicated alternative)
+  // also needs wrapping to keep the "." glued to the digits in RTL,
+  // and matches the same shape here so splitAndWrap gets a chance at
+  // digit-only text nodes.
+  const HAS_WRAPPABLE = new RegExp("[A-Za-z" + ARROWS + "]|[0-9]+\\.(?![0-9A-Za-z_$])");
   // A run without any of these is arrow/punctuation only — the browser
   // handles those in an RTL context correctly on its own and any
   // <bdi dir="ltr"> we add would freeze the glyph the wrong way.
@@ -810,6 +912,7 @@
         el.removeAttribute(MARK);
         el.style.removeProperty("direction");
         el.style.removeProperty("text-align");
+        unwatchFar(el);
       }
       return;
     }
@@ -823,6 +926,7 @@
       if (el.tagName !== "TABLE") {
         el.style.setProperty("text-align", target === "rtl" ? "right" : "left", "important");
       }
+      if (!current) watchFar(el);
       return;
     }
     // Attribute already equals target. Belt and suspenders: verify the
@@ -833,6 +937,82 @@
       el.style.setProperty("direction", target, "important");
       if (el.tagName !== "TABLE") {
         el.style.setProperty("text-align", target === "rtl" ? "right" : "left", "important");
+      }
+    }
+  }
+
+  // ---- content-visibility gate ----
+  //
+  // The comment on the contain rule above notes that a naive
+  // content-visibility:auto regressed scroll: fast scroll through 600
+  // paragraphs paid a per-paragraph layout event as each one crossed
+  // the viewport. This is the intersection-observer gate that note
+  // called for: a paragraph is only rendered when it's within roughly
+  // two viewports of the visible area, so the browser skips layout
+  // and paint entirely for the rest of a long chat. rootMargin gives
+  // the browser well over a full scroll's worth of runway to lay a
+  // paragraph out BEFORE it enters the viewport, so the class flip
+  // never happens on a visible element — the layout event stays out
+  // of the frames that need to composite.
+  //
+  // Only paragraph-shaped hosts qualify; tables share column widths
+  // across cells, pre lets highlighter overlays paint just outside the
+  // block, ul/ol take their layout from their items, and code always
+  // sits inside another marked host. All of these are handled by the
+  // paragraph they contain.
+  const FAR_ELIGIBLE = {
+    P: 1, LI: 1, BLOCKQUOTE: 1, H1: 1, H2: 1, H3: 1, H4: 1, H5: 1, H6: 1,
+    DD: 1, DT: 1, FIGCAPTION: 1, SUMMARY: 1
+  };
+  let farObserver = null;
+
+  function onFarChange(entries) {
+    for (let i = 0; i < entries.length; i++) {
+      const e = entries[i];
+      if (e.isIntersecting) e.target.classList.remove(CLASS_FAR);
+      else e.target.classList.add(CLASS_FAR);
+    }
+  }
+
+  function ensureFarObserver() {
+    if (farObserver !== null) return true;
+    if (typeof IntersectionObserver !== "function") return false;
+    try {
+      farObserver = new IntersectionObserver(onFarChange, {
+        rootMargin: "200% 0% 200% 0%",
+        threshold: 0
+      });
+    } catch (_) { farObserver = null; return false; }
+    return true;
+  }
+
+  function watchFar(el) {
+    if (!ensureFarObserver()) return;
+    if (!FAR_ELIGIBLE[el.tagName]) return;
+    try { farObserver.observe(el); } catch (_) {}
+  }
+
+  function unwatchFar(el) {
+    if (!farObserver) return;
+    try { farObserver.unobserve(el); } catch (_) {}
+    if (el.classList) el.classList.remove(CLASS_FAR);
+  }
+
+  // Re-observe every already-marked paragraph. Runs on startup so that a
+  // page whose MARK attributes survived from a previous session (extension
+  // reload without a page reload, or a site whose SPA left our markers
+  // in place) doesn't end up with content-visibility applied via CSS but
+  // no IntersectionObserver actually managing the rastai-far class —
+  // which would put us straight back into the auto-toggle regression the
+  // comment on the contain rule warned about.
+  function sweepFarObserver() {
+    if (!ensureFarObserver()) return;
+    let list;
+    try { list = document.querySelectorAll("[" + MARK + "]"); } catch (_) { return; }
+    for (let i = 0; i < list.length; i++) {
+      const el = list[i];
+      if (FAR_ELIGIBLE[el.tagName]) {
+        try { farObserver.observe(el); } catch (_) {}
       }
     }
   }
@@ -990,6 +1170,14 @@
   function syncNativePunctuation(root) {
     const rt = root.tagName;
     if (rt === "UL" || rt === "OL" || rt === "TABLE") return;
+    // Fast path: this runs on every observed mutation, including every
+    // streaming token. The vast majority of paragraphs never contain a
+    // <bdi> at all — the site's own markdown renderer only emits them
+    // for a few specific patterns — so a single "any bdi in here?" check
+    // lets us bail before running the full selector or walking a
+    // possibly-large HTMLCollection. On a weak CPU during a long
+    // streamed answer this alone removes thousands of selector runs.
+    if (!root.getElementsByTagName("bdi").length) return;
     const rtl = root.getAttribute(MARK) === "rtl";
     // Non-RTL paragraphs only need to clean up an existing correction.
     // Our own technical isolates are not candidates for this pass.
@@ -1110,7 +1298,13 @@
       const listTerm = hasPersianList &&
         (touchesPersianList(textNode, text, m.index - 1, -1, root) ||
          touchesPersianList(textNode, text, LATIN_RUN.lastIndex, 1, root));
-      if (!HAS_LATIN_LETTER.test(run) && !NEEDS_ISO.test(run) && !listTerm) continue;
+      // A "N." run (see the LATIN_RUN comment) has no letter, no
+      // NEEDS_ISO character and no Persian delimiter — the default
+      // skip below would leave it as raw text, which is exactly the
+      // case where BiDi splits the "." off to the wrong side. Force
+      // the wrap so "11." stays a single LTR atom on the visual right.
+      const numberedIndex = SECTION_NUMBER.test(run);
+      if (!HAS_LATIN_LETTER.test(run) && !NEEDS_ISO.test(run) && !listTerm && !numberedIndex) continue;
       const weakPrefix = weakNumericPrefixLength(run);
       const isolateAt = weakPrefix && hasRtlStrongBefore(textNode, text, m.index, root)
         ? m.index + weakPrefix : m.index;
@@ -1523,15 +1717,42 @@
   let scrolling = 0;
   let scrollIdleTimer = 0;
 
+  // Site virtualization (ChatGPT/Claude message lists) inserts and removes
+  // DOM as the user scrolls, and each batch used to run through the full
+  // onMutations path — el.closest(HOST_SEL) per record, state lookups,
+  // enqueue calls — on the main thread while the compositor was trying to
+  // keep the scroll smooth. The drain was already paused, but the observer
+  // wasn't. Buffering records during a scroll gesture and replaying them
+  // together on scroll-idle keeps that work out of the frames the browser
+  // needs. The buffer holds native MutationRecord objects; their target
+  // and addedNodes/removedNodes references stay valid past their callback.
+  const SCROLL_BUF_MAX = 2000;
+  let scrollBufferedMuts = [];
+  let scrollBufferedOverflow = false;
+
   function onScrollIdle() {
     scrollIdleTimer = 0;
     scrolling = 0;
+    if (scrollBufferedOverflow) {
+      // Too many mutations to replay cheaply. Drop the buffer and let the
+      // whole-document sweep pick up whatever changed.
+      scrollBufferedOverflow = false;
+      scrollBufferedMuts.length = 0;
+      rescan();
+    } else if (scrollBufferedMuts.length) {
+      const buf = scrollBufferedMuts;
+      scrollBufferedMuts = [];
+      processMuts(buf);
+    }
     if (queueHead < queue.length) schedule();
     if (revisit.size) armRevisit();
   }
 
   function onScroll() {
-    hideFlipBtn();
+    // Only touch the DOM when the button is actually shown — scroll events
+    // fire many times per frame and this used to remove the class on every
+    // single one.
+    if (btnTarget) hideFlipBtn();
     scrolling = 1;
     if (scrollIdleTimer) clearTimeout(scrollIdleTimer);
     scrollIdleTimer = setTimeout(onScrollIdle, 180);
@@ -1557,10 +1778,30 @@
   // nearer than the paragraph, the mutation came from us and is ignored.
   const HOST_SEL = SEL + ",bdi[" + ISO_ATTR + "]";
 
-  // During a stream the same element mutates dozens of times a second, so
-  // a single memo slot removes almost every one of these selector walks.
+  // Two-tier host cache:
+  //   * The scalar memo (hostMemoEl / hostMemoRes) is the fastest
+  //     possible hit — a single === comparison. During a stream this
+  //     catches the >99% of consecutive mutations that share a text
+  //     node's parent element, so the hot path stays a single compare.
+  //   * The WeakMap catches everything else — the same element mutating
+  //     across many mutation batches (unrelated animated icons, a
+  //     virtualized message list bringing back a container it already
+  //     resolved, siblings inside one React commit that differ from the
+  //     memo but repeat next commit). A WeakMap entry is dropped
+  //     automatically when the element is removed and collected, so
+  //     this never pins a detached paragraph alive.
+  //
+  // The scalar memo alone was too shallow for pages that alternate
+  // between three or four animated targets; the WeakMap alone paid a
+  // has()/get() pair even on the hottest path. The two together give
+  // both the fastest hot-path and a real cross-batch cache.
+  //
+  // Re-parenting an element would leave a stale ancestor lookup; sites
+  // don't do that, and a stale entry only misses a rescan (worst case),
+  // never mislabels a paragraph.
   let hostMemoEl = null;
   let hostMemoRes = null;
+  let hostCache = new WeakMap();
 
   function enqueueHost(node, streaming, shapeChanged, t) {
     if (!node) return;
@@ -1570,11 +1811,16 @@
     let host;
     if (el === hostMemoEl) {
       host = hostMemoRes;
+    } else if (hostCache.has(el)) {
+      host = hostCache.get(el);
+      hostMemoEl = el;
+      hostMemoRes = host;
     } else {
       host = el.closest(HOST_SEL);
       if (host && host.tagName === "BDI") host = null;
       hostMemoEl = el;
       hostMemoRes = host;
+      hostCache.set(el, host);
     }
     if (!host) return;
     const st = stateMap.get(host);
@@ -1611,8 +1857,26 @@
    * Now nothing is discarded. Self-inflicted records are harmless because
    * markOne() compares a text signature first: our bdi surgery does not
    * change textContent, so a re-entry costs one hash and exits.
+   *
+   * onMutations is only the gate: during a scroll gesture the site's own
+   * virtualization can emit hundreds of childList records, so records are
+   * buffered and replayed on scroll-idle. processMuts holds the real work.
    */
   function onMutations(muts) {
+    if (scrolling) {
+      if (scrollBufferedOverflow) return;
+      if (scrollBufferedMuts.length + muts.length > SCROLL_BUF_MAX) {
+        scrollBufferedMuts.length = 0;
+        scrollBufferedOverflow = true;
+        return;
+      }
+      for (let i = 0; i < muts.length; i++) scrollBufferedMuts.push(muts[i]);
+      return;
+    }
+    processMuts(muts);
+  }
+
+  function processMuts(muts) {
     const t = now();
     let contentChanged = false;
     let treeChanged = false;
@@ -1768,8 +2032,8 @@
     document.documentElement.classList.toggle(CLASS_INPUT, mode !== "auto");
     if (mode === "auto") clearInputDirs();
     else sweepEditables();
-    if (document.body) { startObserver(); rescan(); }
-    else waitForBody(function () { startObserver(); primeSweeps(); });
+    if (document.body) { startObserver(); sweepFarObserver(); rescan(); }
+    else waitForBody(function () { startObserver(); sweepFarObserver(); primeSweeps(); });
     // The startup sweeps exist to catch content that was on the page before
     // the observer was wired up. A later mode switch has an observer
     // already running, so one rescan is all it needs.
@@ -1976,6 +2240,10 @@
 
     if (observer) { try { observer.disconnect(); } catch (_) {} observer = null; }
     observing = false;
+    if (farObserver) {
+      try { farObserver.disconnect(); } catch (_) {}
+      farObserver = null;
+    }
     queue.length = 0;
     queueHead = 0;
     queued.clear();
@@ -1984,9 +2252,12 @@
     if (revisitTimer) { clearTimeout(revisitTimer); revisitTimer = 0; }
     if (scrollIdleTimer) { clearTimeout(scrollIdleTimer); scrollIdleTimer = 0; }
     scrolling = 0;
+    scrollBufferedMuts.length = 0;
+    scrollBufferedOverflow = false;
     scheduled = false;
     hostMemoEl = null;
     hostMemoRes = null;
+    hostCache = new WeakMap();   // drop resolved ancestors from the dead session
     streamHits = null;
     streamProbeVersion = -1;
     streamCacheAt = -1e9;
@@ -2006,6 +2277,7 @@
       el.removeAttribute(SRC_ATTR);
       el.style.removeProperty("direction");
       el.style.removeProperty("text-align");
+      el.classList.remove(CLASS_FAR);
     }
     unwrapAll();
 

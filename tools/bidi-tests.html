@@ -140,11 +140,16 @@
       "[A-Za-z0-9\\]})])?|[" + ARROWS + "]+", "g");
     const OLD_NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:," + ARROWS + "]");
 
-    // NEW regex (proposed for v1.38 — widened start, end, and inner set)
+    // NEW regex (proposed for v1.38 — widened start, end, and inner set).
+    // v1.43.1 adds a leading "[0-9]+\." alternative for bare section
+    // numbers ("11.", "1.") so BiDi does not strand the period on the
+    // visual LEFT of the digits in an RTL paragraph.
     const NEW_LATIN_RUN = new RegExp(
-      "[\\[({]?[\\-/@]*[A-Za-z0-9](?:[A-Za-z0-9._,;:=!<>+*/%&|?~^#\\[\\](){}@\\\\ " + ARROWS + "\\-]*" +
+      "[0-9]+\\.(?![0-9A-Za-z_$])" +
+      "|[\\[({]?[\\-/@]*[A-Za-z0-9](?:[A-Za-z0-9._,;:=!<>+*/%&|?~^#\\[\\](){}@\\\\ " + ARROWS + "\\-]*" +
       "[A-Za-z0-9\\]})>])?|[" + ARROWS + "]+", "g");
     const NEW_NEEDS_ISO = new RegExp("[\\[\\](){}<>=!+*/%&|?~^#;:,@\\\\/" + ARROWS + "]");
+    const NEW_SECTION_NUMBER = /^[0-9]+\.$/;
 
     // Mirrors content.js's splitAndWrap. v1.42.8 behaviour:
     //   - Arrow-only run          → <bdi data-iso="arrow"> (CSS flips)
@@ -169,7 +174,10 @@
           last = RUN.lastIndex;
           continue;
         }
-        if (!ISO.test(m[0])) continue;
+        // A bare section number ("11.", "1.") has no ISO character but
+        // still needs the bdi wrap so BiDi does not peel the period
+        // off the digits in an RTL paragraph.
+        if (!ISO.test(m[0]) && !NEW_SECTION_NUMBER.test(m[0])) continue;
         if (m.index > last) parts.push({t: text.slice(last, m.index), iso: false});
         parts.push({t: m[0], iso: true, arrow: false});
         last = RUN.lastIndex;
@@ -393,6 +401,48 @@
       t.assert("Latin+arrow mix IS wrapped as data-iso=\"1\"",
         /<bdi[^>]*data-iso="1">[^<]*getClass\(\)[^<]*<\/bdi>/.test(wrapped),
         "got: " + wrapped);
+    });
+
+    // v1.43.1 — a bare section number ("11.", "1.") appearing at the
+    // end of an RTL run, or between RTL runs, must stay welded to its
+    // period. Without a bdi around it BiDi peels the "." off (it goes
+    // to the visual LEFT of the digits) and the reader sees ".11"
+    // instead of "11.". The LATIN_RUN alternative "[0-9]+\." picks
+    // this up and splitAndWrap treats the run as ISO-worthy.
+    suite("section number 'N.' stays welded to its period in RTL", (t) => {
+      // Regex captures the pattern.
+      t.assert("regex captures '11.' as a whole run",
+        capturedFull("مقدمه: نمره 11.", NEW_LATIN_RUN, "11."),
+        "NEW_LATIN_RUN must match the trailing '11.' in Persian prose");
+      t.assert("regex captures '1.' in isolation",
+        capturedFull("بخش 1.", NEW_LATIN_RUN, "1."),
+        "NEW_LATIN_RUN must match '1.'");
+
+      // Wrap output contains the "N." bdi.
+      const wrapped = wrapWith("مقدمه: نمره 11.", NEW_LATIN_RUN, NEW_NEEDS_ISO);
+      t.assert("wrapper around '11.' present",
+        /<bdi[^>]*data-iso="1">11\.<\/bdi>/.test(wrapped),
+        "got: " + wrapped);
+
+      // Visual: with the wrap, the "1"s are LEFT of the "." (i.e. the
+      // section number reads as "11.", not ".11").
+      const p = makeParagraph(wrapped, "rtl");
+      const x1 = xOf(p, "1");
+      const xd = xOf(p, ".");
+      t.assert("'1' left of '.' — 11. reads as 11., not .11",
+        x1 < xd, "x('1')=" + x1.toFixed(1) + " x('.')=" + xd.toFixed(1));
+
+      // Decimals like 5.5 must NOT match the section-number branch —
+      // the lookahead keeps the run intact and hands it to the main
+      // alternative instead. splitAndWrap then decides on the full run.
+      t.assert("regex does NOT split '5.5' into '5.'",
+        !capturedFull("عدد 5.5 است", NEW_LATIN_RUN, "5."),
+        "NEW_LATIN_RUN must NOT capture '5.' out of a decimal");
+
+      // Identifier tails like "v1_2" or "3D" also must not be cut.
+      t.assert("regex does NOT split 'v1.' out of 'v1.5.beta'",
+        !capturedFull("نسخه v1.5.beta", NEW_LATIN_RUN, "v1."),
+        "NEW_LATIN_RUN must not slice a version identifier");
     });
 
     // v1.42.8 — trailing sentence punctuation MUST stay OUTSIDE the
